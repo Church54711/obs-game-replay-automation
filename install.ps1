@@ -684,6 +684,7 @@ $scriptSource = Join-Path $sourceDir "game-replay-auto.lua"
 $configSource = Join-Path $sourceDir "game-replay-auto-config.txt"
 $manifestSource = Join-Path $sourceDir 'manifest.json'
 $versionSource = Join-Path $sourceDir 'VERSION'
+$licenseSource = Join-Path $sourceDir 'LICENSE'
 $updaterSource = Join-Path $sourceDir 'update.ps1'
 $updaterLauncherSource = Join-Path $sourceDir 'Update OBS Game Replay Automation.cmd'
 foreach ($requiredFile in @(
@@ -691,6 +692,7 @@ foreach ($requiredFile in @(
     $configSource,
     $manifestSource,
     $versionSource,
+    $licenseSource,
     $updaterSource,
     $updaterLauncherSource
 )) {
@@ -715,6 +717,7 @@ $scriptTarget = Join-Path $resolvedScriptsDir "game-replay-auto.lua"
 $configTarget = Join-Path $resolvedScriptsDir "game-replay-auto-config.txt"
 $manifestTarget = Join-Path $resolvedScriptsDir 'manifest.json'
 $versionTarget = Join-Path $resolvedScriptsDir 'VERSION'
+$licenseTarget = Join-Path $resolvedScriptsDir 'LICENSE'
 $updaterTarget = Join-Path $resolvedScriptsDir 'update.ps1'
 $updaterLauncherTarget = Join-Path $resolvedScriptsDir 'Update OBS Game Replay Automation.cmd'
 $configExisted = Test-Path -LiteralPath $configTarget -PathType Leaf
@@ -742,6 +745,7 @@ New-Item -ItemType Directory -Path $resolvedScriptsDir -Force | Out-Null
 Copy-FileUnlessSamePath -Source $scriptSource -Destination $scriptTarget
 Copy-FileUnlessSamePath -Source $manifestSource -Destination $manifestTarget
 Copy-FileUnlessSamePath -Source $versionSource -Destination $versionTarget
+Copy-FileUnlessSamePath -Source $licenseSource -Destination $licenseTarget
 Copy-FileUnlessSamePath -Source $updaterSource -Destination $updaterTarget
 Copy-FileUnlessSamePath -Source $updaterLauncherSource -Destination $updaterLauncherTarget
 
@@ -796,6 +800,7 @@ Write-Host "Installation complete."
 Write-Host "  OBS script:    $scriptTarget"
 Write-Host "  Config:        $configTarget"
 Write-Host "  Version:       $([System.IO.File]::ReadAllText($versionTarget).Trim())"
+Write-Host "  License:       0BSD ($licenseTarget)"
 Write-Host "  Updater:       $updaterLauncherTarget"
 Write-Host "  Replay folder: $selectedOutputRoot"
 if ($preserveConfigExactly) {

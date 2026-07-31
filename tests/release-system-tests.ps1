@@ -23,6 +23,7 @@ function Assert-Contains {
 
 $versionPath = Join-Path $ProjectRoot 'VERSION'
 $manifestPath = Join-Path $ProjectRoot 'manifest.json'
+$licensePath = Join-Path $ProjectRoot 'LICENSE'
 $installerPath = Join-Path $ProjectRoot 'install.ps1'
 $updaterPath = Join-Path $ProjectRoot 'update.ps1'
 $packagePath = Join-Path $ProjectRoot 'package.ps1'
@@ -34,6 +35,7 @@ $sitePath = Join-Path $ProjectRoot 'docs\index.html'
 foreach ($requiredPath in @(
     $versionPath,
     $manifestPath,
+    $licensePath,
     $installerPath,
     $updaterPath,
     $packagePath,
@@ -52,6 +54,13 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ([string]$manifest.version -ne $version) {
     throw 'manifest.json and VERSION do not agree.'
 }
+if ([string]$manifest.license -ne '0BSD') {
+    throw 'manifest.json does not identify the project as 0BSD licensed.'
+}
+$license = [System.IO.File]::ReadAllText($licensePath)
+Assert-Contains -Content $license -Pattern 'BSD Zero Clause License' -Message 'LICENSE is not the 0BSD license.'
+Assert-Contains -Content $license -Pattern 'Permission to use, copy, modify, and/or distribute this software for any\s+purpose' -Message 'LICENSE is missing the 0BSD permission grant.'
+Assert-Contains -Content $license -Pattern 'THE SOFTWARE IS PROVIDED "AS IS"' -Message 'LICENSE is missing its warranty disclaimer.'
 if ([string]$manifest.updates.provider -ne 'github-releases' -or
     [string]$manifest.updates.repository -ne 'Church54711/obs-game-replay-automation' -or
     [string]$manifest.updates.channel -ne 'stable') {
@@ -59,7 +68,7 @@ if ([string]$manifest.updates.provider -ne 'github-releases' -or
 }
 
 $installer = [System.IO.File]::ReadAllText($installerPath)
-foreach ($fileName in @('manifest.json', 'VERSION', 'update.ps1', 'Update OBS Game Replay Automation.cmd')) {
+foreach ($fileName in @('manifest.json', 'VERSION', 'LICENSE', 'update.ps1', 'Update OBS Game Replay Automation.cmd')) {
     Assert-Contains `
         -Content $installer `
         -Pattern ([regex]::Escape($fileName)) `
@@ -79,7 +88,7 @@ Assert-Contains -Content $updater -Pattern '\$escapedScriptsDirectory\s*=\s*\$PS
 Assert-Contains -Content $updater -Pattern '-ScriptsDir' -Message 'Updater does not pass its installed scripts directory to setup.'
 
 $package = [System.IO.File]::ReadAllText($packagePath)
-foreach ($fileName in @('update.ps1', 'Update OBS Game Replay Automation.cmd')) {
+foreach ($fileName in @('LICENSE', 'update.ps1', 'Update OBS Game Replay Automation.cmd')) {
     Assert-Contains `
         -Content $package `
         -Pattern ([regex]::Escape($fileName)) `
@@ -98,6 +107,7 @@ foreach ($action in @('actions/configure-pages@v5', 'actions/upload-pages-artifa
 
 $site = [System.IO.File]::ReadAllText($sitePath)
 Assert-Contains -Content $site -Pattern 'releases/latest/download/obs-game-replay-automation-latest\.zip' -Message 'Website does not link to the stable latest download.'
+Assert-Contains -Content $site -Pattern '>0BSD License<' -Message 'Website does not identify the project license.'
 
 $updater = [System.IO.File]::ReadAllText((Join-Path $ProjectRoot 'update.ps1'))
 Assert-Contains -Content $updater -Pattern '\[switch\]\$NoStartMenuShortcut' -Message 'Updater is missing the isolated-test shortcut switch.'
@@ -146,10 +156,14 @@ if ($null -eq (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue)) {
         if ($beforeHash -ne $afterHash) {
             throw 'Upgrade changed the existing user configuration.'
         }
-        foreach ($installedMetadata in @('VERSION', 'manifest.json', 'update.ps1', 'Update OBS Game Replay Automation.cmd')) {
+        foreach ($installedMetadata in @('VERSION', 'manifest.json', 'LICENSE', 'update.ps1', 'Update OBS Game Replay Automation.cmd')) {
             if (-not (Test-Path -LiteralPath (Join-Path $scriptsDirectory $installedMetadata) -PathType Leaf)) {
                 throw "Upgrade did not install $installedMetadata."
             }
+        }
+        if ((Get-FileHash -LiteralPath (Join-Path $scriptsDirectory 'LICENSE') -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath $licensePath -Algorithm SHA256).Hash) {
+            throw 'Installed LICENSE does not match the source 0BSD license.'
         }
         Write-Host 'Installer config-preservation regression passed.'
     } finally {

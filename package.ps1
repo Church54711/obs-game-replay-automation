@@ -18,6 +18,7 @@ $releaseFiles = @(
     "game-replay-auto-config.txt",
     "README.md",
     "CHANGELOG.md",
+    "LICENSE",
     "install.ps1",
     "Install OBS Game Replay Automation.cmd",
     "update.ps1",
@@ -47,6 +48,9 @@ if ($Version -ne $sourceVersion) {
 $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
 if ([string]$manifest.version -ne $Version) {
     throw "manifest.json version $($manifest.version) does not match VERSION $Version."
+}
+if ([string]$manifest.license -ne '0BSD') {
+    throw "manifest.json must identify the release license as 0BSD."
 }
 if ([string]$manifest.entry -ne "game-replay-auto.lua" -or [string]$manifest.config -ne "game-replay-auto-config.txt") {
     throw "manifest.json entry/config metadata is invalid."

@@ -5,7 +5,7 @@ the foreground fullscreen game, points Game Capture and Application Audio
 Capture at that game, creates a per-game folder, updates the recording/replay
 path, and manages the replay buffer.
 
-Version 0.4.0 targets installed OBS Studio on Windows x64. The replay automation
+Version 0.4.1 targets installed OBS Studio on Windows x64. The replay automation
 itself was runtime-tested with OBS Studio 32.1.2. The normal setup flow installs
 into the detected OBS Studio folder under Program Files and requests
 administrator permission.
@@ -75,12 +75,13 @@ not create extra folders or make OBS repeatedly retarget the capture sources.
 
 ## Updates
 
-Version 0.4.0 installs version metadata and a one-click updater beside the Lua
-script. Open the Windows Start Menu, find OBS Game Replay Automation, and choose
-Check for Updates. Launching it is the update confirmation: when a newer stable
-release exists, it downloads the versioned package immediately, verifies its
-SHA-256 checksum and GitHub asset digest when available, validates the embedded
-VERSION and manifest, and then runs setup without another text prompt.
+Version 0.4.0 and later install version metadata and a one-click updater beside
+the Lua script. Open the Windows Start Menu, find OBS Game Replay Automation,
+and choose Check for Updates. Launching it is the update confirmation: when a
+newer stable release exists, it downloads the versioned package immediately,
+verifies its SHA-256 checksum and GitHub asset digest when available, validates
+the embedded VERSION and manifest, and then runs setup without another text
+prompt.
 
 If daily update notifications were enabled during setup, Windows runs a
 limited-privilege check at 12:00 PM and runs it later when that time was missed.
@@ -186,18 +187,26 @@ The repository validates every push and pull request on a GitHub-hosted Windows
 runner. To publish, update VERSION, manifest.json, and CHANGELOG.md together,
 commit the change, and push the matching tag:
 
-    git tag v0.4.0
-    git push origin v0.4.0
+    git tag v0.4.1
+    git push origin v0.4.1
 
 The release workflow reruns package validation, rejects a mismatched tag,
 publishes the versioned ZIP and checksum, creates stable latest-download aliases
 for the website, and writes machine-readable latest.json metadata.
+
+## License
+
+OBS Game Replay Automation is licensed under the Zero-Clause BSD license
+(`0BSD`). Anyone may use, copy, modify, redistribute, or sell the
+software without an attribution requirement. The software is provided as-is,
+without warranty. See LICENSE for the complete terms.
 
 ## Files
 
 - game-replay-auto.lua: script loaded by OBS.
 - game-replay-auto-config.txt: editable sidecar config.
 - CHANGELOG.md: version history.
+- LICENSE: Zero-Clause BSD terms included with source, installs, and releases.
 - install.ps1: installed-OBS detector, elevated installer, and output chooser.
 - Install OBS Game Replay Automation.cmd: double-click setup launcher.
 - update.ps1: stable-release checker, verifier, downloader, and upgrade runner.
