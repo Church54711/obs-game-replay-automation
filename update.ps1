@@ -141,7 +141,8 @@ function Assert-UpdateArchive {
     $versionPath = Join-Path $ExtractedDirectory 'VERSION'
     $manifestPath = Join-Path $ExtractedDirectory 'manifest.json'
     $installerPath = Join-Path $ExtractedDirectory 'install.ps1'
-    foreach ($requiredPath in @($versionPath, $manifestPath, $installerPath)) {
+    $licensePath = Join-Path $ExtractedDirectory 'LICENSE'
+    foreach ($requiredPath in @($versionPath, $manifestPath, $installerPath, $licensePath)) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
             throw "The downloaded update is missing $([System.IO.Path]::GetFileName($requiredPath))."
         }
@@ -151,6 +152,9 @@ function Assert-UpdateArchive {
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     if ($archiveVersion -ne $ExpectedVersion -or [string]$manifest.version -ne $ExpectedVersion) {
         throw "Downloaded package version metadata does not match release $ExpectedVersion."
+    }
+    if ([string]$manifest.license -ne '0BSD') {
+        throw 'Downloaded package license metadata is missing or invalid.'
     }
     return $installerPath
 }

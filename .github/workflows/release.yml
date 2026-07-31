@@ -46,6 +46,7 @@ jobs:
             channel = 'stable'
             publishedAt = [DateTime]::UtcNow.ToString('o')
             testedWithObs = [string]$manifest.testedWithObs
+            license = [string]$manifest.license
             downloadUrl = "https://github.com/Church54711/obs-game-replay-automation/releases/download/$env:GITHUB_REF_NAME/obs-game-replay-automation-$version.zip"
             sha256 = $hash
             releaseNotesUrl = "https://github.com/Church54711/obs-game-replay-automation/releases/tag/$env:GITHUB_REF_NAME"

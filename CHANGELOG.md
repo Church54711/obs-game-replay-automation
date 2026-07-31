@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - 2026-07-31
+
+- Licensed the project under the OSI-approved Zero-Clause BSD license (`0BSD`),
+  allowing unrestricted use, copying, modification, redistribution, and sale
+  without an attribution requirement.
+- Included LICENSE in source archives, installer deployments, updater archive
+  validation, release metadata, automated tests, and the download website.
+
 ## 0.4.0 - 2026-07-31
 
 - Added a GitHub Releases updater that compares semantic versions, downloads
