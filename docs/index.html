@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Automatically target the active fullscreen game in OBS, organize replay clips by game, and keep the script updated through verified GitHub Releases.">
+  <meta name="theme-color" content="#111827">
+  <title>OBS Game Replay Automation</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="OBS Game Replay Automation home">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span>Replay Automation</span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#updates">Updates</a>
+      <a href="https://github.com/Church54711/obs-game-replay-automation">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy">
+        <p class="eyebrow">Windows · OBS Studio · Lua</p>
+        <h1>Your replay buffer,<br><span>already on the right game.</span></h1>
+        <p class="hero-summary">
+          Automatically retarget Game Capture and Application Audio Capture to the active fullscreen game,
+          save replays into per-game folders, and manage the replay buffer without per-frame overhead.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" id="download-button" href="https://github.com/Church54711/obs-game-replay-automation/releases/latest/download/obs-game-replay-automation-latest.zip">
+            Download latest
+          </a>
+          <a class="button button-secondary" href="https://github.com/Church54711/obs-game-replay-automation/releases/latest">Release notes</a>
+        </div>
+        <p class="release-status" id="release-status" aria-live="polite">Checking the latest stable release…</p>
+      </div>
+
+      <div class="route-card" aria-label="Replay automation flow">
+        <div class="route-card-heading">
+          <span class="status-dot"></span>
+          <span>Automatic routing</span>
+        </div>
+        <div class="route-step">
+          <span class="route-number">01</span>
+          <div>
+            <strong>Detect active game</strong>
+            <p>Stable process and window identity</p>
+          </div>
+        </div>
+        <div class="route-line"></div>
+        <div class="route-step">
+          <span class="route-number">02</span>
+          <div>
+            <strong>Retarget capture</strong>
+            <p>Video and application audio together</p>
+          </div>
+        </div>
+        <div class="route-line"></div>
+        <div class="route-step">
+          <span class="route-number">03</span>
+          <div>
+            <strong>Route replay output</strong>
+            <p><code>OBS Replays\Game Name</code></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="Compatibility and safety summary">
+      <div><span>Platform</span><strong>Windows x64</strong></div>
+      <div><span>Target</span><strong>Installed OBS Studio</strong></div>
+      <div><span>Updates</span><strong>SHA-256 verified</strong></div>
+      <div><span>Configuration</span><strong>Preserved on upgrade</strong></div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-heading">
+        <p class="eyebrow">Built for replay workflows</p>
+        <h2>One scene. Many games. No repetitive retargeting.</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">◎</span>
+          <h3>Stable game identity</h3>
+          <p>Window-title changes do not create extra folders or repeatedly reconfigure capture sources.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">↳</span>
+          <h3>Per-game folders</h3>
+          <p>Replay clips are routed beneath one simple root folder, with optional executable-to-name mappings.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">◫</span>
+          <h3>Video and audio together</h3>
+          <p>Game Capture and Application Audio Capture follow the same detected process.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">◇</span>
+          <h3>Hook safety controls</h3>
+          <p>Direct capture is the safe default, with an explicit per-game compatibility override when required.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">⟳</span>
+          <h3>Verified updater</h3>
+          <p>Stable GitHub Releases, SHA-256 validation, embedded version checks, and no forced OBS shutdown.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">⌁</span>
+          <h3>Lightweight polling</h3>
+          <p>Timer-based checks avoid per-frame, render-thread, and encoder work.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split-section" id="install">
+      <div>
+        <p class="eyebrow">Quick installation</p>
+        <h2>Set it up once.</h2>
+        <p class="section-intro">The installer detects standard OBS installations, requests UAC only when Program Files requires it, and asks for one replay-output folder.</p>
+      </div>
+      <ol class="steps">
+        <li><span>1</span><div><strong>Close OBS Studio</strong><p>Scene migration is intentionally blocked while OBS is running.</p></div></li>
+        <li><span>2</span><div><strong>Download and extract the ZIP</strong><p>Use the latest stable package from this page.</p></div></li>
+        <li><span>3</span><div><strong>Run the installer</strong><p>Double-click <code>Install OBS Game Replay Automation.cmd</code>.</p></div></li>
+        <li><span>4</span><div><strong>Add the Lua script once</strong><p>In OBS, open Tools → Scripts and select the exact installed path shown by setup.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="section update-section" id="updates">
+      <div class="update-copy">
+        <p class="eyebrow">Updates without guesswork</p>
+        <h2>You publish. GitHub delivers. Users stay in control.</h2>
+        <p>
+          Setup can enable a limited-privilege daily update check. It only notifies when a newer stable release exists.
+          Installation waits for the user, refuses to run while OBS is open, verifies the release checksum, and preserves the existing configuration.
+        </p>
+        <p class="fine-print">Existing installations before version 0.4.0 need one manual upgrade to receive the updater.</p>
+      </div>
+      <div class="terminal-card" aria-label="Example update check output">
+        <div class="terminal-title"><span></span><span></span><span></span></div>
+        <pre><code>&gt; Check for Updates
+Checking GitHub…
+Installed  0.4.0
+Available  0.4.1
+Checksum   verified
+OBS status closed
+
+Ready to install.</code></pre>
+      </div>
+    </section>
+
+    <section class="section requirements">
+      <div class="section-heading compact">
+        <p class="eyebrow">Before you install</p>
+        <h2>Requirements</h2>
+      </div>
+      <ul>
+        <li>Windows x64 and an installed copy of OBS Studio</li>
+        <li>A scene containing Game Capture and Application Audio Capture sources</li>
+        <li>Replay Buffer configured in OBS and a Save Replay Buffer hotkey</li>
+        <li>Internet access to GitHub only for release downloads and optional update checks</li>
+      </ul>
+    </section>
+
+    <section class="cta-section">
+      <p class="eyebrow">Ready to simplify replay capture?</p>
+      <h2>Install the latest stable release.</h2>
+      <div class="hero-actions centered">
+        <a class="button button-primary" href="https://github.com/Church54711/obs-game-replay-automation/releases/latest/download/obs-game-replay-automation-latest.zip">Download latest</a>
+        <a class="button button-secondary" href="https://github.com/Church54711/obs-game-replay-automation#readme">Read documentation</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>OBS Game Replay Automation is an independent community script and is not affiliated with or endorsed by the OBS Project.</p>
+    <div>
+      <a href="https://github.com/Church54711/obs-game-replay-automation">Source</a>
+      <a href="https://github.com/Church54711/obs-game-replay-automation/issues">Issues</a>
+      <a href="https://github.com/Church54711/obs-game-replay-automation/releases">Releases</a>
+    </div>
+  </footer>
+</body>
+</html>

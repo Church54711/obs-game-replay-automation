@@ -1,0 +1,114 @@
+# Change only this line to move every game's clip folders.
+# Environment variables such as %USERPROFILE% and UNC paths are supported.
+root_folder=%USERPROFILE%\Videos\OBS Replays
+
+# These should match the OBS source names in your game scene.
+game_capture_source=Game Capture
+game_audio_source=Game Audio
+
+# Only activate when the foreground game window covers nearly the whole monitor.
+# Borderless fullscreen should count. Lower to 95 if a game's border/window chrome barely misses.
+fullscreen_only=true
+fullscreen_min_coverage_percent=98
+
+# OBS window match priority:
+# 0 = Window title must match
+# 1 = Match title, otherwise find window of same type
+# 2 = Match title, otherwise find window of same executable
+match_priority=2
+
+# Keep OBS open all day, but stop replay buffer after the tracked game process exits.
+# This avoids idle 3D GPU clocks from replay buffer capture.
+stop_replay_buffer_when_game_exits=true
+game_exit_stop_delay_seconds=15
+
+# Default OBS replay length in seconds.
+# Per-game overrides can still use replay_seconds=...
+default_replay_seconds=120
+
+# Optional folder-name overrides.
+# Format: exe.exe|optional window title text=Folder Name
+# Unknown games do not need an entry; they get a folder automatically from the game window title.
+[game_folders]
+hl2.exe|Team Fortress 2=Team Fortress 2
+tf_win64.exe=Team Fortress 2
+tf.exe=Team Fortress 2
+
+# Optional per-game overrides.
+# Format:
+# exe.exe|optional title text=folder=Folder Name;root_folder=D:\OBS Replays;fullscreen_only=true;stop_delay_seconds=15;match_priority=2;replay_seconds=120;anti_cheat_hook=false;enabled=true
+#
+# You only need to include the settings you want to override.
+# enabled=false is useful for games/apps you never want to trigger replay buffer.
+# fullscreen_only=false lets one specific game trigger even when it is windowed.
+# The OBS anti-cheat compatibility hook defaults to false in this automation.
+# Set anti_cheat_hook=true only for a game whose anti-cheat blocks normal Game Capture.
+# Restart that game after changing this value; an already-injected hook remains
+# loaded until the captured game process exits.
+#
+# Examples:
+# hl2.exe|Team Fortress 2=folder=Team Fortress 2;stop_delay_seconds=15
+# somewindowedgame.exe=folder=Some Windowed Game;fullscreen_only=false
+# protectedgame.exe=anti_cheat_hook=true
+# noisyapp.exe=enabled=false
+[game_overrides]
+
+# Optional extra ignored executable names.
+# The script already ignores common launchers, browsers, Steam, Discord, OBS, Codex, and Windows shell processes.
+# Add one executable name per line, like codex.exe or notepad.exe.
+[ignored_exes]
+nvidia app.exe
+nvidia geforce experience.exe
+nvidia share.exe
+amdsoftware.exe
+radeonsoftware.exe
+icue.exe
+lghub.exe
+razer synapse 3.exe
+steelseriesgg.exe
+steam.exe
+steamwebhelper.exe
+gameoverlayui.exe
+epicgameslauncher.exe
+eadesktop.exe
+eaapp.exe
+battle.net.exe
+agent.exe
+galaxyclient.exe
+gog galaxy.exe
+ubisoftconnect.exe
+uplay.exe
+bethesdanetlauncher.exe
+minecraftlauncher.exe
+riotclientservices.exe
+riotclientux.exe
+riotclientuxrender.exe
+discord.exe
+teams.exe
+slack.exe
+telegram.exe
+whatsapp.exe
+zoom.exe
+chrome.exe
+msedge.exe
+firefox.exe
+brave.exe
+opera.exe
+vivaldi.exe
+cmd.exe
+powershell.exe
+pwsh.exe
+windowsterminal.exe
+conhost.exe
+explorer.exe
+dwm.exe
+applicationframehost.exe
+shellexperiencehost.exe
+searchhost.exe
+startmenuexperiencehost.exe
+systemsettings.exe
+lockapp.exe
+taskmgr.exe
+obs64.exe
+obs32.exe
+codex.exe

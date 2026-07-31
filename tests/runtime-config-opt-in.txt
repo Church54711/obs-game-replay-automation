@@ -1,0 +1,17 @@
+root_folder=%TEMP%\obs-replay-hook-policy-test
+game_capture_source=Game Capture
+game_audio_source=Game Audio
+fullscreen_only=false
+match_priority=2
+stop_replay_buffer_when_game_exits=false
+default_replay_seconds=5
+
+[game_folders]
+obs-hook-policy-fixture.exe=Hook Policy Fixture
+
+[game_overrides]
+obs-hook-policy-fixture.exe=fullscreen_only=false;anti_cheat_hook=true
+
+[ignored_exes]
+javaw.exe
+chatgpt.exe

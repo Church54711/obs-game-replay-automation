@@ -1,0 +1,10 @@
+/dist/
+/release-dist/
+/.tools/
+*.log
+tests/*.exe
+tests/*.pdb
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,22 @@
+name: Validate package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Build and validate recipient package
+        shell: pwsh
+        run: ./package.ps1 -OutputDir "$env:RUNNER_TEMP\obs-game-replay-dist"

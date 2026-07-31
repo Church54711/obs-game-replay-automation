@@ -1,0 +1,10 @@
+* text=auto
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.lua text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf

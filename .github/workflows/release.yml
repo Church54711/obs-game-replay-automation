@@ -1,0 +1,84 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v6
+
+      - name: Validate tag and build package
+        id: package
+        shell: pwsh
+        run: |
+          $version = [System.IO.File]::ReadAllText((Join-Path $PWD 'VERSION')).Trim()
+          $expectedTag = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match VERSION $version."
+          }
+
+          $outputDirectory = Join-Path $PWD 'release-dist'
+          ./package.ps1 -Version $version -OutputDir $outputDirectory
+
+          $versionedZip = Join-Path $outputDirectory "obs-game-replay-automation-$version.zip"
+          $versionedChecksum = "$versionedZip.sha256.txt"
+          $latestZip = Join-Path $outputDirectory 'obs-game-replay-automation-latest.zip'
+          $latestChecksum = "$latestZip.sha256.txt"
+          Copy-Item -LiteralPath $versionedZip -Destination $latestZip
+
+          $hash = (Get-FileHash -LiteralPath $versionedZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $latestChecksumText = "$hash  $([System.IO.Path]::GetFileName($latestZip))" + [Environment]::NewLine
+          [System.IO.File]::WriteAllText($latestChecksum, $latestChecksumText, [System.Text.UTF8Encoding]::new($false))
+
+          $manifest = Get-Content -LiteralPath (Join-Path $PWD 'manifest.json') -Raw | ConvertFrom-Json
+          $latestMetadata = [ordered]@{
+            schemaVersion = 1
+            version = $version
+            tag = $env:GITHUB_REF_NAME
+            channel = 'stable'
+            publishedAt = [DateTime]::UtcNow.ToString('o')
+            testedWithObs = [string]$manifest.testedWithObs
+            downloadUrl = "https://github.com/Church54711/obs-game-replay-automation/releases/download/$env:GITHUB_REF_NAME/obs-game-replay-automation-$version.zip"
+            sha256 = $hash
+            releaseNotesUrl = "https://github.com/Church54711/obs-game-replay-automation/releases/tag/$env:GITHUB_REF_NAME"
+          }
+          $latestJson = Join-Path $outputDirectory 'latest.json'
+          [System.IO.File]::WriteAllText(
+            $latestJson,
+            (($latestMetadata | ConvertTo-Json -Depth 4) + [Environment]::NewLine),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "output_directory=$outputDirectory" >> $env:GITHUB_OUTPUT
+
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          OUTPUT_DIRECTORY: ${{ steps.package.outputs.output_directory }}
+        run: |
+          $assets = @(
+            (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION.zip"),
+            (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION.zip.sha256.txt"),
+            (Join-Path $env:OUTPUT_DIRECTORY 'obs-game-replay-automation-latest.zip'),
+            (Join-Path $env:OUTPUT_DIRECTORY 'obs-game-replay-automation-latest.zip.sha256.txt'),
+            (Join-Path $env:OUTPUT_DIRECTORY 'latest.json')
+          )
+          & gh release create $env:GITHUB_REF_NAME @assets `
+            --verify-tag `
+            --generate-notes `
+            --latest `
+            --title "OBS Game Replay Automation $env:VERSION"
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release create failed with exit code $LASTEXITCODE."
+          }
