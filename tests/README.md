@@ -23,6 +23,17 @@ setting, same-target reset, per-game override, installer scene migration, and
 matching recipient documentation. Runtime acceptance still requires isolated
 OBS because this source check cannot prove which injector OBS selected.
 
+`replay-routing-tests.ps1` is also run by `package.ps1`. It prevents detection-
+time directory creation from returning, checks that the active replay filename
+format is prefixed with the selected game, and verifies that sidecar and OBS UI
+exclusions are merged. Runtime acceptance still requires a real replay save.
+
+`runtime-replay-routing-test.ps1` performs that real-save acceptance check in a
+temporary OBS profile. It launches the installed OBS binary against isolated
+config, confirms the game folder is absent after detection, saves one five-
+second replay, verifies the routed file and root-only profile paths, and retains
+the OBS log plus a hash summary under `dist\verification`.
+
 `runtime-config-default.txt` and `runtime-config-opt-in.txt` are isolated OBS
 fixture inputs. The default case must log `using direct hook`; the opt-in case
 must log `using helper (compatibility hook)`. Both ignore `javaw.exe` so a live

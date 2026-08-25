@@ -40,6 +40,7 @@ tf.exe=Team Fortress 2
 #
 # You only need to include the settings you want to override.
 # enabled=false is useful for games/apps you never want to trigger replay buffer.
+# enabled=true explicitly opts an executable back in if it is under [ignored_exes].
 # fullscreen_only=false lets one specific game trigger even when it is windowed.
 # The OBS anti-cheat compatibility hook defaults to false in this automation.
 # Set anti_cheat_hook=true only for a game whose anti-cheat blocks normal Game Capture.
@@ -51,12 +52,18 @@ tf.exe=Team Fortress 2
 # somewindowedgame.exe=folder=Some Windowed Game;fullscreen_only=false
 # protectedgame.exe=anti_cheat_hook=true
 # noisyapp.exe=enabled=false
+# moonlight.exe=enabled=true
 [game_overrides]
 
 # Optional extra ignored executable names.
 # The script already ignores common launchers, browsers, Steam, Discord, OBS, Codex, and Windows shell processes.
 # Add one executable name per line, like codex.exe or notepad.exe.
 [ignored_exes]
+chatgpt.exe
+moonlight.exe
+mpc-hc.exe
+mpc-hc64.exe
+snippingtool.exe
 nvidia app.exe
 nvidia geforce experience.exe
 nvidia share.exe

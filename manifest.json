@@ -1,14 +1,14 @@
 {
   "name": "obs-game-replay-automation",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "obs-lua-script",
   "license": "0BSD",
   "entry": "game-replay-auto.lua",
   "config": "game-replay-auto-config.txt",
   "platform": "windows",
   "obsScriptEngine": "LuaJIT",
-  "description": "Routes OBS Game Capture and Application Audio Capture to the active fullscreen game, switches replay output to a per-game folder, and manages replay buffer start/stop.",
-  "testedWithObs": "32.1.2",
+  "description": "Targets the active fullscreen game and routes saved replays into per-game folders without creating empty folders during detection.",
+  "testedWithObs": "32.2.2",
   "installTarget": "installed-obs-windows-x64",
   "repository": "https://github.com/Church54711/obs-game-replay-automation",
   "updates": {

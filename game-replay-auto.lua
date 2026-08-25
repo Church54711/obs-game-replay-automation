@@ -42,7 +42,6 @@ BOOL QueryFullProcessImageNameW(HANDLE hProcess, DWORD dwFlags, wchar_t *lpExeNa
 BOOL GetExitCodeProcess(HANDLE hProcess, DWORD *lpExitCode);
 DWORD GetLastError(void);
 unsigned long long GetTickCount64(void);
-BOOL CreateDirectoryW(const wchar_t *lpPathName, void *lpSecurityAttributes);
 DWORD GetFileAttributesW(const wchar_t *lpFileName);
 DWORD ExpandEnvironmentStringsW(const wchar_t *lpSrc, wchar_t *lpDst, DWORD nSize);
 int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, const char *lpMultiByteStr, int cbMultiByte, wchar_t *lpWideCharStr, int cchWideChar);
@@ -59,7 +58,6 @@ local null = ffi.cast("void *", 0)
 
 local CP_UTF8 = 65001
 local PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-local ERROR_ALREADY_EXISTS = 183
 local FILE_ATTRIBUTE_DIRECTORY = 0x10
 local INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
 local STILL_ACTIVE = 259
@@ -79,6 +77,7 @@ tf.exe=Team Fortress 2]]
 local default_excluded_exes = {
 	["applicationframehost.exe"] = true,
 	["battle.net.exe"] = true,
+	["chatgpt.exe"] = true,
 	["chrome.exe"] = true,
 	["cmd.exe"] = true,
 	["codex.exe"] = true,
@@ -91,12 +90,16 @@ local default_excluded_exes = {
 	["galaxyclient.exe"] = true,
 	["gog galaxy.exe"] = true,
 	["lockapp.exe"] = true,
+	["moonlight.exe"] = true,
+	["mpc-hc.exe"] = true,
+	["mpc-hc64.exe"] = true,
 	["msedge.exe"] = true,
 	["obs64.exe"] = true,
 	["powershell.exe"] = true,
 	["pwsh.exe"] = true,
 	["searchhost.exe"] = true,
 	["shellexperiencehost.exe"] = true,
+	["snippingtool.exe"] = true,
 	["steam.exe"] = true,
 	["steamwebhelper.exe"] = true,
 	["systemsettings.exe"] = true,
@@ -142,6 +145,7 @@ local active_game_pid = nil
 local active_game_exe = nil
 local active_game_stop_delay_seconds = nil
 local active_window_id = nil
+local active_output_root = nil
 local active_output_folder = nil
 local active_replay_seconds = nil
 local active_match_priority = nil
@@ -152,8 +156,12 @@ local active_game_audio_source = nil
 local active_game_exit_detected_at = nil
 local pending_replay_start_at = 0
 local pending_replay_start_until = 0
+local replay_routing_base_directory = nil
+local replay_routing_base_format = nil
+local replay_routing_applied_format = nil
 local missing_source_warnings = {}
 local last_invalid_output_root = nil
+local last_unavailable_output_root = nil
 local output_settings_sections = { "SimpleOutput", "AdvOut" }
 
 local function trim(value)
@@ -348,7 +356,7 @@ local function parse_game_overrides(raw)
 						match_priority = tonumber(values.match_priority),
 						anti_cheat_hook = optional_config_bool(values, "anti_cheat_hook", nil),
 						fullscreen_only = optional_config_bool(values, "fullscreen_only", nil),
-						enabled = optional_config_bool(values, "enabled", true),
+						enabled = optional_config_bool(values, "enabled", nil),
 					})
 				end
 			end
@@ -357,8 +365,13 @@ local function parse_game_overrides(raw)
 	return overrides
 end
 
-local function parse_excluded_exes(raw)
+local function parse_excluded_exes(raw, inherited_values)
 	local values = copy_default_excluded_exes()
+	for exe, enabled in pairs(inherited_values or {}) do
+		if enabled then
+			values[exe] = true
+		end
+	end
 	for part in (raw or ""):gmatch("[^\r\n,;]+") do
 		local exe = trim(part):lower()
 		if exe ~= "" then
@@ -511,7 +524,9 @@ local function load_text_config(force)
 		game_overrides = parse_game_overrides(parsed.game_overrides_text)
 	end
 	if parsed.excluded_exes_text ~= nil then
-		excluded_exes = parse_excluded_exes(parsed.excluded_exes_text)
+		-- The sidecar section is documented as extra ignored executables. Keep
+		-- exclusions saved in OBS's script settings instead of replacing them.
+		excluded_exes = parse_excluded_exes(parsed.excluded_exes_text, excluded_exes)
 	end
 
 	configuration_revision = configuration_revision + 1
@@ -755,7 +770,7 @@ local function get_foreground_game_window()
 
 	local exe_path = get_process_path(tonumber(pid[0]))
 	local exe = basename(exe_path):lower()
-	if exe == "" or excluded_exes[exe] then
+	if exe == "" then
 		return nil
 	end
 
@@ -771,6 +786,7 @@ local function get_foreground_game_window()
 		class_name = get_window_class(hwnd),
 		exe = exe,
 		exe_path = exe_path,
+		is_excluded = excluded_exes[exe] == true,
 		area_percent = monitor_coverage_percent,
 		is_fullscreen = monitor_coverage_percent >= fullscreen_min_coverage_percent,
 	}
@@ -780,6 +796,9 @@ end
 
 local function game_window_is_eligible(info, override)
 	if override ~= nil and override.enabled == false then
+		return false
+	end
+	if info.is_excluded and not (override ~= nil and override.enabled == true) then
 		return false
 	end
 
@@ -912,64 +931,6 @@ local function directory_exists(path)
 
 	local attributes = tonumber(kernel32.GetFileAttributesW(wide))
 	return attributes ~= INVALID_FILE_ATTRIBUTES and bit.band(attributes, FILE_ATTRIBUTE_DIRECTORY) ~= 0
-end
-
-local function create_directory(path)
-	local wide = utf8_to_wide(path)
-	if wide == nil then
-		return false
-	end
-	if kernel32.CreateDirectoryW(wide, nil) ~= 0 then
-		return true
-	end
-	return tonumber(kernel32.GetLastError()) == ERROR_ALREADY_EXISTS and directory_exists(path)
-end
-
-local function ensure_folder(path)
-	local normalized = clean_root_path(path)
-	if normalized == "" or not is_absolute_windows_path(normalized) then
-		obs.script_log(obs.LOG_WARNING, "Clip folder must be an absolute Windows path: '" .. normalized .. "'.")
-		return false
-	end
-	if directory_exists(normalized) then
-		return true
-	end
-
-	local current = ""
-	local rest = normalized
-	if normalized:match("^%a:\\") then
-		current = normalized:sub(1, 3)
-		rest = normalized:sub(4)
-	else
-		local server, share, unc_rest = normalized:match("^\\\\([^\\]+)\\([^\\]+)\\?(.*)$")
-		if server == nil or share == nil then
-			obs.script_log(obs.LOG_WARNING, "Invalid UNC clip folder: '" .. normalized .. "'.")
-			return false
-		end
-		current = "\\\\" .. server .. "\\" .. share
-		rest = unc_rest or ""
-		if not directory_exists(current) then
-			obs.script_log(obs.LOG_WARNING, "UNC share is unavailable: '" .. current .. "'.")
-			return false
-		end
-	end
-
-	for part in rest:gmatch("[^\\]+") do
-		if current == "" then
-			current = part
-		elseif current:sub(-1) == "\\" then
-			current = current .. part
-		else
-			current = current .. "\\" .. part
-		end
-
-		if not create_directory(current) then
-			obs.script_log(obs.LOG_WARNING, "Could not create clip folder '" .. path .. "'.")
-			return false
-		end
-	end
-
-	return directory_exists(normalized)
 end
 
 local function obs_window_escape(value)
@@ -1133,6 +1094,86 @@ local function set_obs_output_settings(path, replay_seconds)
 	return true
 end
 
+local function clear_replay_routing_state()
+	replay_routing_base_directory = nil
+	replay_routing_base_format = nil
+	replay_routing_applied_format = nil
+end
+
+local function update_active_replay_routing()
+	if active_output_root == nil or active_output_root == "" or active_game_name == nil then
+		return false
+	end
+
+	local replay_buffer = obs.obs_frontend_get_replay_buffer_output()
+	if replay_buffer == nil then
+		return false
+	end
+
+	local settings = obs.obs_output_get_settings(replay_buffer)
+	local current_directory = clean_root_path(obs.obs_data_get_string(settings, "directory"))
+	local current_format = obs.obs_data_get_string(settings, "format") or ""
+
+	-- OBS rebuilds these settings whenever the replay buffer starts. A format
+	-- different from the one we last applied is therefore the user's clean
+	-- filename format and becomes the base for this buffer lifetime.
+	if replay_routing_applied_format == nil or current_format ~= replay_routing_applied_format then
+		replay_routing_base_directory = current_directory
+		replay_routing_base_format = current_format
+	end
+
+	local base_format = replay_routing_base_format or ""
+	if base_format == "" then
+		obs.script_log(obs.LOG_WARNING, "Could not read OBS's replay filename format; per-game replay routing was not applied.")
+		obs.obs_data_release(settings)
+		obs.obs_output_release(replay_buffer)
+		return false
+	end
+
+	local routed_format = active_game_name .. "/" .. base_format
+	if current_directory ~= active_output_root or current_format ~= routed_format then
+		obs.obs_data_set_string(settings, "directory", active_output_root)
+		obs.obs_data_set_string(settings, "format", routed_format)
+		obs.obs_output_update(replay_buffer, settings)
+	end
+
+	replay_routing_applied_format = routed_format
+	obs.obs_data_release(settings)
+	obs.obs_output_release(replay_buffer)
+	return true
+end
+
+local function restore_active_replay_routing()
+	if replay_routing_applied_format == nil or replay_routing_base_format == nil then
+		clear_replay_routing_state()
+		return
+	end
+
+	local replay_buffer = obs.obs_frontend_get_replay_buffer_output()
+	if replay_buffer ~= nil then
+		local settings = obs.obs_output_get_settings(replay_buffer)
+		local current_format = obs.obs_data_get_string(settings, "format") or ""
+		if current_format == replay_routing_applied_format then
+			obs.obs_data_set_string(settings, "directory", replay_routing_base_directory or active_output_root or output_root)
+			obs.obs_data_set_string(settings, "format", replay_routing_base_format)
+			obs.obs_output_update(replay_buffer, settings)
+		end
+		obs.obs_data_release(settings)
+		obs.obs_output_release(replay_buffer)
+	end
+
+	clear_replay_routing_state()
+end
+
+local function on_frontend_event(event)
+	if event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED then
+		clear_replay_routing_state()
+		update_active_replay_routing()
+	elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED then
+		clear_replay_routing_state()
+	end
+end
+
 local function maybe_start_pending_replay_buffer()
 	if pending_replay_start_at <= 0 then
 		return
@@ -1189,6 +1230,7 @@ local function clear_active_game_state()
 	active_game_stop_delay_seconds = nil
 	active_game_exit_detected_at = nil
 	active_window_id = nil
+	active_output_root = nil
 	active_output_folder = nil
 	active_replay_seconds = nil
 	active_match_priority = nil
@@ -1236,6 +1278,14 @@ local function configure_for_game(info, game_name, override, process_key, window
 		obs.script_log(obs.LOG_WARNING, "Output root must be an absolute Windows path; cannot route replay buffer clips: '" .. (effective_output_root or "") .. "'.")
 		return
 	end
+	if not directory_exists(effective_output_root) then
+		if effective_output_root ~= last_unavailable_output_root then
+			last_unavailable_output_root = effective_output_root
+			obs.script_log(obs.LOG_WARNING, "Replay root is unavailable; it must already exist before the replay buffer can save: '" .. effective_output_root .. "'.")
+		end
+		return
+	end
+	last_unavailable_output_root = nil
 
 	local effective_match_priority = match_priority
 	if override ~= nil and override.match_priority ~= nil then
@@ -1268,6 +1318,7 @@ local function configure_for_game(info, game_name, override, process_key, window
 		window_id = build_obs_window_id(info)
 	end
 	local folder_changed = output_folder ~= active_output_folder
+	local output_root_changed = effective_output_root ~= active_output_root
 	local replay_seconds_changed = effective_replay_seconds ~= active_replay_seconds
 	local capture_settings_changed = window_changed
 		or effective_match_priority ~= active_match_priority
@@ -1276,14 +1327,8 @@ local function configure_for_game(info, game_name, override, process_key, window
 		or game_audio_source ~= active_game_audio_source
 	local game_changed = process_changed or game_name ~= active_game_name
 
-	if folder_changed then
-		if not ensure_folder(output_folder) then
-			return
-		end
-	end
-
-	if folder_changed or replay_seconds_changed then
-		if not set_obs_output_settings(output_folder, effective_replay_seconds) then
+	if output_root_changed or replay_seconds_changed then
+		if not set_obs_output_settings(effective_output_root, effective_replay_seconds) then
 			return
 		end
 	end
@@ -1336,6 +1381,7 @@ local function configure_for_game(info, game_name, override, process_key, window
 	active_game_stop_delay_seconds = effective_stop_delay_seconds
 	active_game_exit_detected_at = nil
 	active_window_id = window_id
+	active_output_root = effective_output_root
 	active_output_folder = output_folder
 	active_replay_seconds = effective_replay_seconds
 	active_match_priority = effective_match_priority
@@ -1346,7 +1392,10 @@ local function configure_for_game(info, game_name, override, process_key, window
 	end
 	active_game_capture_source = game_capture_updated and game_capture_source or nil
 	active_game_audio_source = game_audio_updated and game_audio_source or nil
-	ensure_replay_buffer_running(folder_changed or replay_seconds_changed)
+	ensure_replay_buffer_running(folder_changed or output_root_changed or replay_seconds_changed)
+	if obs.obs_frontend_replay_buffer_active() then
+		update_active_replay_routing()
+	end
 end
 
 function poll_foreground_game()
@@ -1387,7 +1436,7 @@ function poll_foreground_game()
 end
 
 function script_description()
-	return "Automatically points the Game Capture and Application Audio Capture sources at the foreground game, creates a per-game output folder, sets OBS recording/replay output to that folder, and starts the replay buffer."
+	return "Automatically points the Game Capture and Application Audio Capture sources at the foreground game, routes each saved replay into a per-game folder, and manages the replay buffer. Empty folders are not created merely by detecting a fullscreen app."
 end
 
 function script_defaults(settings)
@@ -1501,6 +1550,12 @@ function script_update(settings)
 	}
 	read_profile_replay_seconds_default()
 	load_text_config(true)
+	if directory_exists(output_root) then
+		set_obs_output_settings(output_root, replay_seconds)
+	elseif output_root ~= last_unavailable_output_root then
+		last_unavailable_output_root = output_root
+		obs.script_log(obs.LOG_WARNING, "Replay root is unavailable; it must already exist before the replay buffer can save: '" .. output_root .. "'.")
+	end
 
 	obs.timer_remove(poll_foreground_game)
 	obs.timer_add(poll_foreground_game, poll_interval_ms)
@@ -1508,8 +1563,11 @@ end
 
 function script_load(settings)
 	script_update(settings)
+	obs.obs_frontend_add_event_callback(on_frontend_event)
 end
 
 function script_unload()
 	obs.timer_remove(poll_foreground_game)
+	obs.obs_frontend_remove_event_callback(on_frontend_event)
+	restore_active_replay_routing()
 end

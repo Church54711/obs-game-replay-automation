@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 - 2026-08-25
+
+- Delayed per-game folder creation until a replay is actually saved. Detecting
+  a fullscreen window now selects the destination without leaving an empty
+  folder behind.
+- Preserved the user's OBS replay filename and date-folder format by prefixing
+  the active replay output's format with the selected game. OBS creates the
+  complete destination itself during replay save, so its saved-path state stays
+  accurate.
+- Reset the profile's recording/replay base paths to the configured root rather
+  than the last detected application's folder.
+- Fixed `[ignored_exes]` in the sidecar config replacing exclusions saved in
+  OBS's Scripts window. The two lists are now merged as documented.
+- Added MPC-HC, Moonlight, Snipping Tool, and the ChatGPT/Codex desktop process
+  to the default ignored executables. An explicit per-game `enabled=true`
+  override can opt one back in.
+- Added source regression checks for lazy folder creation, replay-format
+  routing, exclusion merging, and ignored-app opt-in behavior.
+
 ## 0.4.1 - 2026-07-31
 
 - Licensed the project under the OSI-approved Zero-Clause BSD license (`0BSD`),

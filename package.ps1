@@ -76,6 +76,12 @@ if (-not (Test-Path -LiteralPath $hookPolicyTests -PathType Leaf)) {
 }
 & $hookPolicyTests -ProjectRoot $PSScriptRoot
 
+$replayRoutingTests = Join-Path $PSScriptRoot "tests\replay-routing-tests.ps1"
+if (-not (Test-Path -LiteralPath $replayRoutingTests -PathType Leaf)) {
+    throw "Missing replay-routing tests: $replayRoutingTests"
+}
+& $replayRoutingTests -ProjectRoot $PSScriptRoot
+
 $releaseSystemTests = Join-Path $PSScriptRoot "tests\release-system-tests.ps1"
 if (-not (Test-Path -LiteralPath $releaseSystemTests -PathType Leaf)) {
     throw "Missing release-system tests: $releaseSystemTests"

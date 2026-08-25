@@ -2,11 +2,11 @@
 
 Windows automation for an installed copy of OBS Studio. The Lua script detects
 the foreground fullscreen game, points Game Capture and Application Audio
-Capture at that game, creates a per-game folder, updates the recording/replay
-path, and manages the replay buffer.
+Capture at that game, routes saved replays into per-game folders, and manages
+the replay buffer. Merely detecting a fullscreen app does not create a folder.
 
-Version 0.4.1 targets installed OBS Studio on Windows x64. The replay automation
-itself was runtime-tested with OBS Studio 32.1.2. The normal setup flow installs
+Version 0.5.0 targets installed OBS Studio on Windows x64. The replay automation
+itself was runtime-tested with OBS Studio 32.2.2. The normal setup flow installs
 into the detected OBS Studio folder under Program Files and requests
 administrator permission.
 
@@ -66,12 +66,29 @@ Environment variables and UNC paths are supported. Because OBS runs elevated
 in this deployment, a mapped network drive must also be visible to elevated
 processes. If it is not, use a UNC path such as \\server\share\OBS Replays.
 
-The config is reread while OBS is running. The next detected game/folder update
-uses the new root.
+The config is reread while OBS is running. The next detected game uses the new
+root.
 
 Once a game process is detected, its inferred game and folder name stay stable
 until that process exits. Games that change their window title while running do
 not create extra folders or make OBS repeatedly retarget the capture sources.
+
+## Folder creation and ignored apps
+
+The configured root folder must already exist. Detecting a game only selects
+the final route and starts or retargets the replay buffer. The per-game folder,
+including any date subfolders from your OBS filename format, is created by OBS
+only when a replay is actually saved.
+
+Executable names under `[ignored_exes]` never trigger the automation. Entries
+saved in OBS under Tools > Scripts and entries in the sidecar config are merged.
+Use the executable name shown in the OBS log; for example, 64-bit MPC-HC is
+`mpc-hc64.exe`, not `mpc-hc.exe`. MPC-HC, Moonlight, Snipping Tool, and the
+ChatGPT/Codex desktop process are ignored by default. To intentionally capture
+an ignored executable, opt it back in explicitly:
+
+    [game_overrides]
+    moonlight.exe=enabled=true
 
 ## Updates
 
@@ -187,8 +204,8 @@ The repository validates every push and pull request on a GitHub-hosted Windows
 runner. To publish, update VERSION, manifest.json, and CHANGELOG.md together,
 commit the change, and push the matching tag:
 
-    git tag v0.4.1
-    git push origin v0.4.1
+    git tag v0.5.0
+    git push origin v0.5.0
 
 The release workflow reruns package validation, rejects a mismatched tag,
 publishes the versioned ZIP and checksum, creates stable latest-download aliases
@@ -222,8 +239,10 @@ without warranty. See LICENSE for the complete terms.
 - If OBS reports a missing source, confirm the source name and source type.
 - If setup says OBS is running, exit OBS from its File menu or system tray and
   run setup again.
-- If the output folder cannot be created, rerun setup and select a path visible
-  to elevated applications.
+- If the replay root is unavailable, rerun setup and select an existing path
+  visible to elevated applications.
+- If a utility triggers unexpectedly, copy its exact executable name from the
+  OBS log into `[ignored_exes]`.
 - If a protected game is black in Game Capture, add only that executable under
   [game_overrides] with anti_cheat_hook=true.
 - If an update is found while OBS is open, close OBS and launch Check for
