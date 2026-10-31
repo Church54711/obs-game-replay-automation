@@ -1,0 +1,14 @@
+[
+  "00-compatibility.lua",
+  "10-platform.lua",
+  "20-state.lua",
+  "30-configuration.lua",
+  "40-detection.lua",
+  "50-obs-sources.lua",
+  "60-replay.lua",
+  "70-automation.lua",
+  "75-user-settings.lua",
+  "80-controls.lua",
+  "85-setup-diagnostics.lua",
+  "90-entrypoints.lua"
+]

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0 - Unreleased
+
+- Unified install, update, and uninstall paths in an installation record. ZIP
+  updates preserve custom OBS configuration paths and synchronize EXE maintenance
+  files and the Windows Installed Apps version.
+- Migrated preferences, per-game rules, and hotkeys to a versioned user settings
+  file under the selected OBS configuration folder, with migration backups,
+  validated import/export, atomic writes, and concurrent-writer protection.
+- Split Lua development sources into ordered components while retaining one
+  generated, installable script. Packaging rejects a stale generated bundle.
+- Added first-run checks, explicit folder/source setup actions, a continuously
+  refreshed local status page, and diagnostics that omit personal paths/names.
+- Added scheduled/manual OBS prerelease early warnings and optional real OpenGL
+  capture, application-audio tone, and NVENC acceptance tests with decoded media
+  checks. Commercial game and anti-cheat behavior still requires game testing.
+- Prepared optional timestamped publisher signing for Setup and its uninstaller,
+  plus checksum/signature verification. Builds remain unsigned by default.
+
 ## 0.7.0 - 2026-10-30
 
 - Added a standard Windows setup EXE with OBS and configuration folder selection,

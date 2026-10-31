@@ -8,6 +8,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+& (Join-Path $PSScriptRoot 'build-lua.ps1') -Check
 
 $versionFile = Join-Path $PSScriptRoot "VERSION"
 $manifestFile = Join-Path $PSScriptRoot "manifest.json"
@@ -25,10 +26,14 @@ $releaseFiles = @(
     "Update OBS Game Replay Automation.cmd",
     "manifest.json",
     "VERSION"
+    "installation.ps1"
+    "setup-bridge.ps1"
+    "verify-release.ps1"
 )
 
 foreach ($file in $releaseFiles) {
     $path = Join-Path $PSScriptRoot $file
+    if ($file -eq 'setup-bridge.ps1') { $path = Join-Path $PSScriptRoot 'installer\setup-bridge.ps1' }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Missing release file: $path"
     }
@@ -133,7 +138,9 @@ if (Test-Path -LiteralPath $stagingRoot) {
 New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
 
 foreach ($file in $releaseFiles) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $stagingRoot $file) -Force
+    $source = Join-Path $PSScriptRoot $file
+    if ($file -eq 'setup-bridge.ps1') { $source = Join-Path $PSScriptRoot 'installer\setup-bridge.ps1' }
+    Copy-Item -LiteralPath $source -Destination (Join-Path $stagingRoot $file) -Force
 }
 
 if (Test-Path -LiteralPath $zipPath) {

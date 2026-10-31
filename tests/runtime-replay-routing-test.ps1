@@ -119,6 +119,10 @@ try {
     Copy-Item -LiteralPath (Join-Path $portableConfigFull 'user.ini') -Destination (Join-Path $obsConfigRoot 'user.ini')
     Copy-Item -LiteralPath (Join-Path $portableConfigFull 'basic') -Destination $obsConfigRoot -Recurse
     Copy-Item -LiteralPath (Join-Path $projectFull 'game-replay-auto.lua') -Destination (Join-Path $scriptsRoot 'game-replay-auto.lua')
+    [IO.File]::WriteAllText((Join-Path $scriptsRoot 'game-replay-installation.json'), (@{
+        schemaVersion=1; product='obs-game-replay-automation'; scriptsDir=$scriptsRoot
+        obsConfigRoot=$obsConfigRoot; settingsDir=(Join-Path $obsConfigRoot 'game-replay-automation')
+    } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
     Copy-Item -LiteralPath (Join-Path $projectFull 'tests\runtime-save-replay.lua') -Destination (Join-Path $scriptsRoot 'runtime-save-replay.lua')
 
     $outputRootForObs = $outputRoot.Replace('\', '/')

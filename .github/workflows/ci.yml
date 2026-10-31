@@ -37,6 +37,7 @@ jobs:
         shell: powershell
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
+          ./tests/release-verification-tests.ps1 -SetupPath "$env:RUNNER_TEMP\obs-game-replay-dist\obs-game-replay-automation-$version-setup.exe"
           ./tests/windows-setup-tests.ps1 -SetupPath "$env:RUNNER_TEMP\obs-game-replay-dist\obs-game-replay-automation-$version-setup.exe" -EvidenceDir "$env:RUNNER_TEMP\setup-evidence"
 
       - name: Upload setup and test logs

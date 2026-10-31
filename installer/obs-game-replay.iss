@@ -33,6 +33,11 @@ OutputDir={#InstallerOutputDir}
 OutputBaseFilename=obs-game-replay-automation-{#AppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
+#ifdef EnableSigning
+SignTool=ReplaySign
+SignedUninstaller=yes
+SignToolRunMinimized=yes
+#endif
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}\payload"; Flags: ignoreversion
@@ -161,6 +166,12 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  if not IsAdminInstallMode and
+    ((Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf64}'))), Lowercase(AddBackslash(ScriptsFolder('')))) = 1) or
+     (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf32}'))), Lowercase(AddBackslash(ScriptsFolder('')))) = 1)) then begin
+    Result := 'A per-user setup cannot manage Program Files. Run Setup without /CURRENTUSER, or choose writable portable OBS folders.';
+    exit;
+  end;
   if not ValidFolder(ObsPage.Values[0]) or not ValidFolder(ObsPage.Values[1]) or
     not ValidFolder(ScriptsFolder('')) or not ValidFolder(ReplayPage.Values[0]) then begin
     Result := 'Choose absolute folder paths, such as C:\Program Files\obs-studio.';

@@ -10,6 +10,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $product = 'obs-game-replay-automation'
 $utf8 = [Text.UTF8Encoding]::new($false)
+# During the read-only preflight the bridge is extracted into a temporary
+# folder. The shared library is needed only after the payload is installed.
+$library = Join-Path $AppDir 'payload\installation.ps1'
+if (Test-Path -LiteralPath $library -PathType Leaf) { . $library }
 
 function Get-AbsolutePath([string]$Value) {
     if ($Value -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)' -or $Value -match '["\r\n]') {
@@ -45,6 +49,13 @@ function Read-State {
     if ($state.product -ne $product -or $state.schemaVersion -ne 1) { throw 'Invalid installation inventory. No files were removed.' }
     $state.scriptsDir = Get-AbsolutePath $state.scriptsDir
     $state.obsConfigRoot = Get-AbsolutePath $state.obsConfigRoot
+    if (Get-Command Read-ReplayInstallation -ErrorAction SilentlyContinue) {
+        $record = Read-ReplayInstallation $state.scriptsDir
+        if ($null -ne $record) {
+            $state.obsConfigRoot = $record.obsConfigRoot
+            $state.licenseHash = $record.licenseHash
+        }
+    }
     return $state
 }
 function Remove-Installation {
@@ -66,7 +77,7 @@ function Remove-Installation {
     # No recursive deletion: scenes, sources, profiles, clips, config, and
     # existing recovery directories are never part of the removal inventory.
     $targets = [Collections.Generic.List[object]]::new()
-    foreach ($name in @('game-replay-auto.lua', 'update.ps1', 'Update OBS Game Replay Automation.cmd', 'manifest.json', 'VERSION', 'LICENSE')) {
+    foreach ($name in @('game-replay-auto.lua', 'update.ps1', 'Update OBS Game Replay Automation.cmd', 'installation.ps1', 'game-replay-installation.json', 'manifest.json', 'VERSION', 'LICENSE')) {
         $path = Join-Path $scripts $name
         if (Test-Path -LiteralPath $path -PathType Container) { throw "Expected a file, found a directory: $path" }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
@@ -162,6 +173,7 @@ try {
                 ObsConfigRoot = $request.ObsConfigRoot
                 NonInteractive = $true
                 NoStartMenuShortcut = $true
+                SetupAppDir = $AppDir
             }
             if (-not (Test-Path -LiteralPath (Join-Path $request.ScriptsDir 'game-replay-auto-config.txt') -PathType Leaf)) {
                 $parameters.OutputRoot = $request.ReplayRoot

@@ -84,7 +84,7 @@ Assert-Contains -Content $updater -Pattern 'Get-FileHash.+SHA256' -Message 'Upda
 Assert-Contains -Content $updater -Pattern "Get-Process -Name 'obs64'" -Message 'Updater does not refuse installation while OBS is running.'
 Assert-Contains -Content $updater -Pattern 'Wait-ForObsToClose' -Message 'One-click updater does not let the user close OBS and retry in place.'
 Assert-Contains -Content $updater -Pattern 'Assert-UpdateArchive' -Message 'Updater does not validate downloaded package metadata.'
-Assert-Contains -Content $updater -Pattern '\$escapedScriptsDirectory\s*=\s*\$PSScriptRoot' -Message 'Updater does not resolve its exact installed scripts directory.'
+Assert-Contains -Content $updater -Pattern 'Get-ReplayUpdateCommand.+-ScriptsDir \$PSScriptRoot' -Message 'Updater does not resolve its exact installed scripts directory.'
 Assert-Contains -Content $updater -Pattern '-ScriptsDir' -Message 'Updater does not pass its installed scripts directory to setup.'
 
 $package = [System.IO.File]::ReadAllText($packagePath)
@@ -111,7 +111,7 @@ Assert-Contains -Content $site -Pattern '>0BSD License<' -Message 'Website does 
 
 $updater = [System.IO.File]::ReadAllText((Join-Path $ProjectRoot 'update.ps1'))
 Assert-Contains -Content $updater -Pattern '\[switch\]\$NoStartMenuShortcut' -Message 'Updater is missing the isolated-test shortcut switch.'
-Assert-Contains -Content $updater -Pattern '\$command \+= '' -NoStartMenuShortcut''' -Message 'Updater does not pass the isolated-test shortcut switch to the installer.'
+Assert-Contains -Content $updater -Pattern '-NoStartMenuShortcut:\$NoStartMenuShortcut' -Message 'Updater does not pass the isolated-test shortcut switch to the installer.'
 
 if ($null -eq (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue)) {
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("obs-game-replay-config-preservation-{0}" -f [guid]::NewGuid().ToString('N'))

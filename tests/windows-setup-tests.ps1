@@ -56,6 +56,10 @@ try {
     [IO.File]::WriteAllText($scenePath, $sceneText, $utf8)
     Invoke-Setup 'fresh-install'
     Assert-True (Test-Path -LiteralPath $uninstaller) 'Setup did not create an uninstaller.'
+    $setupSignature = Get-AuthenticodeSignature -LiteralPath $SetupPath
+    if ($setupSignature.Status -eq 'Valid') {
+        & (Join-Path $PSScriptRoot '..\verify-release.ps1') -Path $uninstaller -SignatureOnly -RequireSignature -ExpectedThumbprint $setupSignature.SignerCertificate.Thumbprint
+    }
     Assert-True (Test-Path $uninstallKey) 'Setup did not register Installed Apps.'
     Assert-True ((Get-ItemProperty $uninstallKey).InstallLocation.TrimEnd('\') -eq $appDirectory) 'Installed Apps points outside the fixture.'
     $state = [IO.File]::ReadAllText((Join-Path $appDirectory 'deployment-state.json')) | ConvertFrom-Json
@@ -74,6 +78,13 @@ try {
     [IO.File]::WriteAllText($scenePath, ($scene | ConvertTo-Json -Depth 100), $utf8)
     $configHash = (Get-FileHash -LiteralPath $configPath).Hash
     $sceneHash = (Get-FileHash -LiteralPath $scenePath).Hash
+    # A 0.7 EXE inventory predates the shared runtime record. Its ZIP updater
+    # passes only ScriptsDir; recover the custom config from Installed Apps.
+    Remove-Item -LiteralPath (Join-Path $scriptsDirectory 'game-replay-installation.json')
+    & (Join-Path $appDirectory 'payload\install.ps1') -ScriptsDir $scriptsDirectory -NonInteractive -NoStartMenuShortcut
+    $migratedRecord = Get-Content (Join-Path $scriptsDirectory 'game-replay-installation.json') -Raw | ConvertFrom-Json
+    Assert-True ($migratedRecord.obsConfigRoot -eq $configDirectory -and $migratedRecord.setupAppDir -eq $appDirectory) 'Legacy EXE upgrade lost its custom OBS folder or maintenance ownership.'
+    Write-Host 'PASS legacy EXE inventory migrates through the ZIP updater path'
     $clip = Join-Path $replayDirectory 'keep-this-clip.mkv'
     [IO.File]::WriteAllText($clip, 'TEST CLIP DATA', $utf8)
     [IO.File]::WriteAllText((Join-Path $scriptsDirectory 'unrelated.lua'), '-- another script', $utf8)
@@ -85,6 +96,34 @@ try {
     Assert-True ([IO.File]::ReadAllText($scriptPath) -ne '-- OLD RELEASE') 'Upgrade did not replace the runtime.'
     Assert-True (@(Get-ChildItem -LiteralPath $scriptsDirectory -Directory -Filter '.game-replay-install-*').Count -ge 2) 'Upgrade discarded recovery backups.'
     Write-Host 'PASS upgrade replaces runtime and preserves config, script settings, and backups'
+
+    # Simulate a subsequent ZIP updater release. The shared record must update
+    # the EXE maintenance payload and Installed Apps while preserving preferences.
+    $prefsDir = Join-Path $configDirectory 'game-replay-automation'
+    New-Item -ItemType Directory -Path $prefsDir -Force | Out-Null
+    $prefsPath = Join-Path $prefsDir 'settings.json'
+    $preferencesText = @{ schemaVersion=1; settings=@{output_root=$replayDirectory; game_capture_source='Game Capture'; game_audio_source='Game Audio'} } | ConvertTo-Json
+    [IO.File]::WriteAllText($prefsPath, $preferencesText, $utf8)
+    $prefsHash = (Get-FileHash -LiteralPath $prefsPath).Hash
+    $project = Split-Path $PSScriptRoot -Parent
+    $next = Join-Path $testRoot 'Next release'
+    New-Item -ItemType Directory -Path $next -Force | Out-Null
+    Copy-Item -Path (Join-Path $appDirectory 'payload\*') -Destination $next
+    [IO.File]::WriteAllText((Join-Path $next 'VERSION'), '0.8.1', $utf8)
+    $nextManifest = Get-Content (Join-Path $next 'manifest.json') -Raw | ConvertFrom-Json
+    $nextManifest.version = '0.8.1'
+    [IO.File]::WriteAllText((Join-Path $next 'manifest.json'), ($nextManifest | ConvertTo-Json -Depth 20), $utf8)
+    . (Join-Path $next 'installation.ps1')
+    $updateCommand = Get-ReplayUpdateCommand -InstallerPath (Join-Path $next 'install.ps1') -ScriptsDir $scriptsDirectory -NoStartMenuShortcut
+    & ([scriptblock]::Create($updateCommand))
+    Assert-True ((Get-ItemProperty $uninstallKey).DisplayVersion -eq '0.8.1') 'ZIP update left a stale Installed Apps version.'
+    Assert-True ((Get-Content (Join-Path $appDirectory 'payload\VERSION') -Raw).Trim() -eq '0.8.1') 'ZIP update left stale maintenance payload.'
+    Assert-True ((Get-FileHash -LiteralPath $prefsPath).Hash -eq $prefsHash) 'ZIP update changed canonical preferences.'
+    Assert-True ((Get-FileHash -LiteralPath (Join-Path $appDirectory 'setup-bridge.ps1')).Hash -eq (Get-FileHash -LiteralPath (Join-Path $next 'setup-bridge.ps1')).Hash) 'ZIP update did not synchronize the uninstall helper.'
+    Write-Host 'PASS ZIP update keeps EXE inventory, Installed Apps, maintenance payload and preferences consistent'
+
+    # Restore the test's pre-migration state for the legacy-config failure case.
+    Remove-Item -LiteralPath $prefsPath
 
     $beforeFailure = (Get-FileHash -LiteralPath $scriptPath).Hash
     $validConfig = [IO.File]::ReadAllBytes($configPath)
@@ -108,7 +147,9 @@ try {
     Assert-True ((Get-FileHash -LiteralPath $scenePath).Hash -eq $sceneHash) 'Failed uninstall changed the scene.'
     Write-Host 'PASS locked-file uninstall aborts before removing runtime or maintenance files'
 
+    [IO.File]::WriteAllText($prefsPath, $preferencesText, $utf8)
     Invoke-Uninstall 'uninstall'
+    Assert-True ((Get-FileHash -LiteralPath $prefsPath).Hash -eq $prefsHash) 'Uninstall changed canonical user preferences.'
     Assert-True (-not (Test-Path -LiteralPath $scriptPath)) 'Uninstall left the runtime file.'
     Assert-True (-not (Test-Path $uninstallKey)) 'Uninstall left Installed Apps registration.'
     Assert-True ((Get-FileHash -LiteralPath $configPath).Hash -eq $configHash) 'Uninstall removed or changed the user configuration.'

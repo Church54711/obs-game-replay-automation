@@ -18,6 +18,8 @@ param(
     [string]$ScriptsDir,
     [string]$OutputRoot,
     [string]$ObsConfigRoot,
+    [string]$SettingsDir,
+    [string]$SetupAppDir,
     [switch]$OverwriteConfig,
     [switch]$EnableUpdateChecks,
     [switch]$DisableUpdateChecks,
@@ -27,6 +29,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'installation.ps1')
 
 function ConvertTo-AbsolutePath {
     param(
@@ -268,6 +271,11 @@ function Restart-Elevated {
     }
     if (-not [string]::IsNullOrWhiteSpace($ObsConfigRoot)) {
         $commandParts += @("-ObsConfigRoot", (ConvertTo-PowerShellLiteral -Value $ObsConfigRoot))
+    }
+    foreach ($entry in @(@('SettingsDir', $SettingsDir), @('SetupAppDir', $SetupAppDir))) {
+        if (-not [string]::IsNullOrWhiteSpace($entry[1])) {
+            $commandParts += @('-' + $entry[0], (ConvertTo-PowerShellLiteral -Value $entry[1]))
+        }
     }
     if ($OverwriteConfig) {
         $commandParts += "-OverwriteConfig"
@@ -730,6 +738,42 @@ Write-Host "OBS Game Replay Automation setup"
 Write-Host ""
 
 $resolvedScriptsDir = Get-InstallTarget
+$priorInstallation = Read-ReplayInstallation $resolvedScriptsDir
+if ($null -eq $priorInstallation) { $priorInstallation = Find-ReplayLegacySetup $resolvedScriptsDir }
+if ($null -ne $priorInstallation) {
+    if ([string]::IsNullOrWhiteSpace($ObsConfigRoot)) { $ObsConfigRoot = $priorInstallation.obsConfigRoot }
+    if ([string]::IsNullOrWhiteSpace($SettingsDir)) { $SettingsDir = $priorInstallation.settingsDir }
+    if ([string]::IsNullOrWhiteSpace($SetupAppDir)) { $SetupAppDir = $priorInstallation.setupAppDir }
+}
+$resolvedObsConfigRoot = Get-ResolvedObsConfigRoot
+if ([string]::IsNullOrWhiteSpace($SettingsDir)) { $SettingsDir = Join-Path $resolvedObsConfigRoot 'game-replay-automation' }
+$SettingsDir = ConvertTo-ReplayAbsolutePath $SettingsDir
+$preferencesPath = Join-Path $SettingsDir 'settings.json'
+$preferencesExist = Test-Path -LiteralPath $preferencesPath -PathType Leaf
+$preferences = $null
+if ($preferencesExist) {
+    if ($OverwriteConfig -or -not [string]::IsNullOrWhiteSpace($OutputRoot)) {
+        throw 'Preferences have migrated. Change the replay folder or import settings in OBS Tools > Scripts.'
+    }
+    try {
+        $document = [IO.File]::ReadAllText($preferencesPath) | ConvertFrom-Json
+        if ($document.schemaVersion -ne 1) { throw 'Unsupported settings schema.' }
+        $values = $document.settings
+        foreach ($key in @('output_root', 'game_capture_source')) {
+            $property = $values.PSObject.Properties[$key]
+            if ($null -eq $property -or $property.Value -isnot [string] -or [string]::IsNullOrWhiteSpace($property.Value)) { throw "Invalid preference: $key" }
+        }
+        $preferences = $values
+    } catch {
+        $preferences = $null
+        Write-Warning 'User settings need attention in OBS; setup will preserve the file and skip scene migration.'
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($SetupAppDir)) { $SetupAppDir = ConvertTo-ReplayAbsolutePath $SetupAppDir }
+if ($null -ne $priorInstallation -and
+    ($priorInstallation.obsConfigRoot -ine $resolvedObsConfigRoot -or $priorInstallation.settingsDir -ine $SettingsDir)) {
+    throw 'Existing installation metadata uses different OBS or settings folders. Preserve those folders when upgrading.'
+}
 if ((Test-IsProgramFilesPath -Path $resolvedScriptsDir) -and -not (Test-IsAdministrator)) {
     Restart-Elevated -ResolvedScriptsDir $resolvedScriptsDir
 }
@@ -755,14 +799,16 @@ if ($preserveConfigExactly) {
     $existingConfigBytes = [System.IO.File]::ReadAllBytes($configTarget)
     $existingConfigHash = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
 }
-if ($configExisted -and -not $OverwriteConfig) {
+if ($configExisted -and -not $OverwriteConfig -and -not $preferencesExist) {
     $existingConfig = [System.IO.File]::ReadAllText($configTarget)
     $existingRootLines = [regex]::Matches($existingConfig, '(?im)^\s*root_folder\s*=')
     if ($existingRootLines.Count -gt 1) {
         throw "Existing config contains more than one root_folder line: $configTarget"
     }
 }
-$selectedOutputRoot = Select-OutputRoot -ExistingConfigPath $configTarget
+$selectedOutputRoot = if ($preferencesExist) {
+    if ($null -ne $preferences) { [string]$preferences.output_root } else { '(preserved in user settings)' }
+} else { Select-OutputRoot -ExistingConfigPath $configTarget }
 $updateCheckPreference = Select-UpdateCheckPreference
 
 New-Item -ItemType Directory -Path $resolvedScriptsDir -Force | Out-Null
@@ -779,7 +825,7 @@ try {
     # Only one installer can write this installation at a time.
     $lockStream = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None')
     New-Item -ItemType Directory -Path $stageRoot, $backupRoot -Force | Out-Null
-    $runtimeNames = @('game-replay-auto.lua', 'LICENSE', 'update.ps1', 'Update OBS Game Replay Automation.cmd', 'manifest.json', 'VERSION')
+    $runtimeNames = @('game-replay-auto.lua', 'LICENSE', 'update.ps1', 'Update OBS Game Replay Automation.cmd', 'installation.ps1', 'manifest.json', 'VERSION')
     foreach ($name in $runtimeNames + @('game-replay-auto-config.txt')) {
         $source = Join-Path $sourceDir $name
         $staged = Join-Path $stageRoot $name
@@ -791,6 +837,26 @@ try {
     $resolvedObsConfigRoot = Get-ResolvedObsConfigRoot
     $sceneDirectory = Join-Path $resolvedObsConfigRoot 'basic\scenes'
     $targets = @($runtimeNames + @('game-replay-auto-config.txt') | ForEach-Object { Join-Path $resolvedScriptsDir $_ })
+    $installationTarget = Join-Path $resolvedScriptsDir 'game-replay-installation.json'
+    $targets += $installationTarget
+    $managerFiles = @()
+    if (-not [string]::IsNullOrWhiteSpace($SetupAppDir)) {
+        $managerState = Join-Path $SetupAppDir 'deployment-state.json'
+        $state = [IO.File]::ReadAllText($managerState) | ConvertFrom-Json
+        if ($state.product -ne 'obs-game-replay-automation' -or
+            (ConvertTo-ReplayAbsolutePath $state.scriptsDir) -ine $resolvedScriptsDir) {
+            throw 'The setup maintenance folder does not own this installation.'
+        }
+        foreach ($name in @('game-replay-auto.lua','game-replay-auto-config.txt','LICENSE','VERSION','manifest.json','README.md','CHANGELOG.md','install.ps1','installation.ps1','update.ps1','Install OBS Game Replay Automation.cmd','Update OBS Game Replay Automation.cmd','setup-bridge.ps1','verify-release.ps1')) {
+            $source = Join-Path $sourceDir $name
+            if ($name -eq 'setup-bridge.ps1' -and -not (Test-Path -LiteralPath $source)) { $source = Join-Path $sourceDir 'installer\setup-bridge.ps1' }
+            $staged = Join-Path $stageRoot ('manager-' + $name)
+            Copy-FileUnlessSamePath -Source $source -Destination $staged
+            $managerFiles += [pscustomobject]@{ Source = $staged; Target = (Join-Path $SetupAppDir ('payload\' + $name)) }
+        }
+        $managerFiles += [pscustomobject]@{ Source = (Join-Path $stageRoot 'manager-setup-bridge.ps1'); Target = (Join-Path $SetupAppDir 'setup-bridge.ps1') }
+        $targets += @($managerFiles | ForEach-Object { $_.Target })
+    }
     if (Test-Path -LiteralPath $sceneDirectory -PathType Container) {
         $targets += @(Get-ChildItem -LiteralPath $sceneDirectory -Filter '*.json' -File | ForEach-Object { $_.FullName })
     }
@@ -828,7 +894,7 @@ try {
         SelectedOutputRoot = $selectedOutputRoot
         BackupBeforeWrite = ($configExisted -and -not $OverwriteConfig)
     }
-    $rootBackup = Set-ConfigOutputRoot @setConfigParameters
+    $rootBackup = if (-not $preferencesExist) { Set-ConfigOutputRoot @setConfigParameters } else { $null }
     if ([string]::IsNullOrWhiteSpace($configBackup)) {
         $configBackup = $rootBackup
     }
@@ -841,10 +907,22 @@ try {
     }
 
     $resolvedObsConfigRoot = Get-ResolvedObsConfigRoot
-    $gameCaptureSourceName = Get-ConfiguredGameCaptureSourceName -ConfigPath $configTarget
-    $sceneMigration = Set-SafeGameCaptureHookDefaults `
-        -ConfigRoot $resolvedObsConfigRoot `
-        -GameCaptureSourceName $gameCaptureSourceName
+    $gameCaptureSourceName = if ($preferencesExist) {
+        if ($null -ne $preferences) { [string]$preferences.game_capture_source } else { '' }
+    } else { Get-ConfiguredGameCaptureSourceName -ConfigPath $configTarget }
+    $sceneMigration = [pscustomobject]@{ FilesUpdated=0; SourcesUpdated=0; BackupPaths=@() }
+    if (-not [string]::IsNullOrWhiteSpace($gameCaptureSourceName)) {
+        $sceneMigration = Set-SafeGameCaptureHookDefaults -ConfigRoot $resolvedObsConfigRoot -GameCaptureSourceName $gameCaptureSourceName
+    }
+    foreach ($file in $managerFiles) { Copy-FileUnlessSamePath -Source $file.Source -Destination $file.Target }
+    $installation = [ordered]@{
+        schemaVersion = 1; product = 'obs-game-replay-automation'; version = $sourceVersion
+        scriptsDir = $resolvedScriptsDir; obsConfigRoot = $resolvedObsConfigRoot
+        settingsDir = $SettingsDir; setupAppDir = $SetupAppDir
+        licenseHash = (Get-FileHash -LiteralPath $licenseSource).Hash
+    }
+    [IO.File]::WriteAllText($installationTarget, ($installation | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+    $null = Read-ReplayInstallation $resolvedScriptsDir
     # Commit release metadata only after files, config, and scene migration pass.
     Copy-FileUnlessSamePath -Source (Join-Path $stageRoot 'manifest.json') -Destination $manifestTarget
     Copy-FileUnlessSamePath -Source (Join-Path $stageRoot 'VERSION') -Destination $versionTarget
@@ -888,6 +966,8 @@ try {
     }
 }
 $updateShortcut = $null
+try { Sync-ReplayInstalledAppsVersion -AppDir $SetupAppDir -Version $sourceVersion }
+catch { Write-Warning "Installed Apps version could not be refreshed: $_" }
 if (-not $NoStartMenuShortcut) {
     try { $updateShortcut = Install-UpdateShortcut -LauncherPath $updaterLauncherTarget }
     catch { Write-Warning "Files were installed and verified, but the update shortcut could not be created: $($_.Exception.Message)" }
@@ -909,6 +989,7 @@ Write-Host "Installation complete."
 Write-Host "  Recovery files: $transactionRoot"
 Write-Host "  OBS script:    $scriptTarget"
 Write-Host "  Config:        $configTarget"
+Write-Host "  User settings: $(Join-Path $SettingsDir 'settings.json') (created by OBS on first load)"
 Write-Host "  Version:       $([System.IO.File]::ReadAllText($versionTarget).Trim())"
 Write-Host "  License:       0BSD ($licenseTarget)"
 Write-Host "  Updater:       $updaterLauncherTarget"

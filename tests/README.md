@@ -1,5 +1,7 @@
 # OBS compatibility tests
 
+Run build-lua.ps1 after editing src/; package.ps1 rejects an out-of-date bundle.
+
 Download an official portable Windows x64 OBS build (asset digest verified),
 then run these commands from the repository root:
 
@@ -27,6 +29,9 @@ editor settings serialization, source removal/recreation, manual stop suppressio
 and Pause/Resume in real OBS. It does not test actual game injection, captured
 audio, physical key presses, notification audibility, or visually inspect the
 Scripts dialog. The properties and callbacks are exercised through OBS's APIs.
+It also checks settings migration, cross-scene reuse, import/export, corrupt-file
+recovery, concurrent-writer refusal, idempotent first-run source creation, folder
+write probing, live status output, and a diagnostic privacy allowlist.
 `ffprobe` or `ffmpeg -v error -i <replay> -f null -` can independently validate
 the retained media. Runtime tests require a Windows desktop/D3D environment.
 
@@ -47,6 +52,43 @@ GitHub Actions runs the runtime tests against 32.2.2 and latest stable weekly,
 on PRs/pushes, and before publishing releases. This workflow must be merged into
 the default branch for scheduled checks to run. GitHub may disable schedules
 in inactive repositories; check the Actions tab when resuming maintenance.
+The separate OBS prerelease early warning workflow runs weekly/manually against
+an official prerelease newer than stable, or reports an explicit skip when none
+exists. Its failures do not block stable releases.
+
+## Capture, audio, and GPU acceptance
+
+With ffmpeg on PATH and a working Windows graphics/audio session:
+
+    ./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Simple -CaptureAcceptance -EvidenceDir dist/capture-x264
+    ./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Advanced -CaptureAcceptance -Encoder NVENC -EvidenceDir dist/capture-nvenc
+
+This compiles the isolated OpenGL fixture with CAPTURE_ACCEPTANCE. It renders an
+animated color field in an off-screen window without taking focus and plays a
+quiet 440 Hz tone from its own process. The isolated OBS profile has no desktop
+or microphone capture. Game Capture must confirm a real graphics hook, and the
+saved MKV must decode into changing video and a full second of the expected
+application-audio tone. NVENC runs additionally require an actual obs-nvenc
+encoder session in the log; unavailable GPUs fail rather than silently using x264.
+No GPU test runs on generic hosted CI runners.
+
+These are repeatable pipeline checks, not certification of commercial games.
+Before claiming support for a particular game/graphics API/anti-cheat combination,
+use a separate OBS profile to save a replay during real gameplay, confirm video,
+game-only audio, hotkey operation, correct per-game folder and chosen encoder,
+then test focus changes, pause/resume, game exit, and a second game. Record OBS,
+game, GPU/driver, output mode, encoder, and observed failures. Hardware output
+and physical hotkeys require that separate acceptance.
+
+## Release checks
+
+Both PowerShell 5.1 and 7 run package and installer transaction tests. Executable
+setup tests additionally exercise ZIP updates of EXE-managed installs, retained
+preferences, and Installed Apps consistency. Run release-verification-tests.ps1
+with -SetupPath to check the real artifact's checksum and signature policy.
+Unsigned artifacts must be rejected by -RequireSignature. Trusted signing cannot
+be validated end to end until a publisher identity is configured; see
+[signing instructions](../signing/README.md).
 
 ## Older foreground window fixtures
 

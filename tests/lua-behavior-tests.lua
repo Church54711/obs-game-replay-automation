@@ -15,6 +15,7 @@ controls.free_bytes = function() return 100 * 1073741824 end
 expand_environment_strings = function(value) return value end
 
 function fixture.reset()
+    user_store.disabled = true; user_store.ready = false; user_store.error = nil
     controls.paused = false; controls.ignored = {}; controls.overrides = {}; controls.disk_cache = {}
     controls.last_saved = ""; controls.save_requested_at = nil; controls.notice = ""; controls.fallback_root = ""
     controls.active_info = nil; controls.last_detected = nil; controls.settings = {}; controls.storage_warning = nil

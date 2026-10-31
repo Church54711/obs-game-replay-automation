@@ -125,6 +125,59 @@ try {
     if (@(Get-ChildItem -LiteralPath $sceneDirectory -Filter '*.bak*').Count -ne 1) { throw 'Repeated installation made an unnecessary scene backup.' }
     Write-Host 'PASS exact config preservation, optional scene fields, metadata, and repeat installation'
 
+    . (Join-Path $ProjectRoot 'installation.ps1')
+    $record = Read-ReplayInstallation $scriptsDirectory
+    if ($record.obsConfigRoot -ne $obsConfigDirectory -or $record.settingsDir -ne (Join-Path $obsConfigDirectory 'game-replay-automation')) {
+        throw 'Installer did not persist the selected OBS and user settings folders.'
+    }
+    $scene.sources[0].settings.anti_cheat_hook = $true
+    [IO.File]::WriteAllText($scenePath, ($scene | ConvertTo-Json -Depth 100))
+    $command = Get-ReplayUpdateCommand -InstallerPath (Join-Path $ProjectRoot 'install.ps1') -ScriptsDir $scriptsDirectory -NoStartMenuShortcut
+    & ([scriptblock]::Create($command)) 6>$null
+    $scene = [IO.File]::ReadAllText($scenePath) | ConvertFrom-Json
+    if ($scene.sources[0].settings.anti_cheat_hook) { throw 'Updater command did not use the persisted custom OBS configuration folder.' }
+    if ((Get-FileHash -LiteralPath $configPath).Hash -ne $configHash) { throw 'Metadata-based update changed user config.' }
+    $quotedCommand = Get-ReplayUpdateCommand -InstallerPath "C:\User's directory\install.ps1" -ScriptsDir $scriptsDirectory
+    $tokens = $null; $parseErrors = $null
+    [Management.Automation.Language.Parser]::ParseInput($quotedCommand, [ref]$tokens, [ref]$parseErrors) | Out-Null
+    if ($parseErrors.Count -ne 0) { throw 'Updater command did not quote apostrophes safely.' }
+    Write-Host 'PASS updater uses the shared installation record and custom configuration folder'
+
+    $manager = Join-Path $tempRoot 'Setup maintenance'
+    New-Item -ItemType Directory -Path (Join-Path $manager 'payload'), $record.settingsDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $manager 'deployment-state.json'), (@{schemaVersion=1; product='obs-game-replay-automation'; scriptsDir=$scriptsDirectory; obsConfigRoot=$obsConfigDirectory} | ConvertTo-Json))
+    $prefsPath = Join-Path $record.settingsDir 'settings.json'
+    [IO.File]::WriteAllText($prefsPath, (@{schemaVersion=1; settings=@{output_root=$outputDirectory; game_capture_source='Custom Capture'}} | ConvertTo-Json))
+    $prefsHash = (Get-FileHash -LiteralPath $prefsPath).Hash
+    $scene.sources[0].name = 'Custom Capture'
+    $scene.sources[0].settings.anti_cheat_hook = $true
+    [IO.File]::WriteAllText($scenePath, ($scene | ConvertTo-Json -Depth 100))
+    # The old sidecar no longer governs migrated preferences or validation.
+    [IO.File]::AppendAllText($configPath, 'game_capture_source=Obsolete duplicate')
+    $legacyHash = (Get-FileHash -LiteralPath $configPath).Hash
+    & (Join-Path $ProjectRoot 'install.ps1') -ScriptsDir $scriptsDirectory -ObsConfigRoot $obsConfigDirectory -SetupAppDir $manager -NonInteractive -NoStartMenuShortcut 6>$null
+    $scene = [IO.File]::ReadAllText($scenePath) | ConvertFrom-Json
+    if ($scene.sources[0].settings.anti_cheat_hook) { throw 'Upgrade ignored the canonical capture source name.' }
+    if ((Get-FileHash -LiteralPath $prefsPath).Hash -ne $prefsHash -or (Get-FileHash -LiteralPath $configPath).Hash -ne $legacyHash) { throw 'Managed update changed user settings.' }
+    foreach ($name in @('VERSION','manifest.json','installation.ps1','install.ps1','verify-release.ps1')) {
+        if ((Get-FileHash -LiteralPath (Join-Path $manager ('payload\' + $name))).Hash -ne (Get-FileHash -LiteralPath (Join-Path $ProjectRoot $name)).Hash) { throw "Maintenance payload mismatch: $name" }
+    }
+    if ((Get-FileHash -LiteralPath (Join-Path $manager 'setup-bridge.ps1')).Hash -ne (Get-FileHash -LiteralPath (Join-Path $ProjectRoot 'installer\setup-bridge.ps1')).Hash) { throw 'Uninstall helper was not synchronized.' }
+    $before = Get-FixtureHashes
+    $lock = [IO.File]::Open((Join-Path $manager 'payload\README.md'), 'Open', 'Read', 'Read')
+    try {
+        $failed = $false
+        try { Invoke-FixtureInstall } catch { $failed = $true }
+        if (-not $failed) { throw 'A locked maintenance payload was accepted.' }
+        Assert-HashesUnchanged $before
+    } finally { $lock.Dispose() }
+    Write-Host 'PASS managed updates synchronize maintenance files, use canonical preferences, and preserve files on failure'
+    [IO.File]::WriteAllText($prefsPath, '{"schemaVersion":1,"settings":"invalid"}')
+    $invalidHash = (Get-FileHash -LiteralPath $prefsPath).Hash
+    Invoke-FixtureInstall
+    if ((Get-FileHash -LiteralPath $prefsPath).Hash -ne $invalidHash) { throw 'Upgrade replaced malformed canonical settings.' }
+    Write-Host 'PASS runtime repair can update files without replacing malformed preferences'
+
     # Test the path parser without running installer entrypoint code.
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $ProjectRoot 'install.ps1'), [ref]$tokens, [ref]$errors)
