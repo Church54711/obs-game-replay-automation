@@ -67,4 +67,3 @@ obslua = {
     obs_property_set_description = function(prop, value) prop.text = value end,
 }
 function script_path() return "" end
-
