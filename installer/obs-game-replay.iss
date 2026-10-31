@@ -54,6 +54,7 @@ Type: files; Name: "{app}\deployment-state.pending.json"
 var
   ObsPage, ReplayPage: TInputDirWizardPage;
   FinalPage: TOutputMsgWizardPage;
+  DeploymentFailure: String;
 
 function CleanFolder(Value: String): String;
 begin
@@ -111,7 +112,8 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = ReplayPage.ID) and FileExists(ScriptsFolder('') + '\game-replay-auto-config.txt');
+  Result := ((PageID = ReplayPage.ID) and FileExists(ScriptsFolder('') + '\game-replay-auto-config.txt')) or
+    ((PageID = FinalPage.ID) and (DeploymentFailure <> ''));
 end;
 
 function ValidFolder(Value: String): Boolean;
@@ -174,12 +176,27 @@ var
 begin
   if CurStep = ssPostInstall then begin
     Failure := RunBridge(ExpandConstant('{app}\setup-bridge.ps1'), 'Install', WriteRequest);
-    if Failure <> '' then RaiseException(Failure);
+    if Failure <> '' then begin
+      { Inno catches ssPostInstall exceptions and can still return zero. Keep
+        failure explicitly for the exit status and the final wizard page. }
+      DeploymentFailure := Failure;
+      RaiseException(Failure);
+    end;
   end;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if DeploymentFailure <> '' then Result := 1 else Result := 0;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  if (CurPageID = wpFinished) and (DeploymentFailure <> '') then begin
+    WizardForm.FinishedHeadingLabel.Caption := 'Setup did not complete';
+    WizardForm.FinishedLabel.Caption := DeploymentFailure + #13#10#13#10 +
+      'Correct the problem and run Setup again. You can remove the setup files through Windows Installed Apps.';
+  end;
   if CurPageID = FinalPage.ID then FinalPage.MsgLabel.Caption :=
     'In OBS, open Tools > Scripts, click +, and select:' + #13#10#13#10 +
     ScriptsFolder('') + '\game-replay-auto.lua' + #13#10#13#10 +

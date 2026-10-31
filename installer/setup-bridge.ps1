@@ -49,6 +49,12 @@ function Read-State {
 }
 function Remove-Installation {
     $state = Read-State
+    $installedProperty = $state.PSObject.Properties['runtimeInstalled']
+    if ($null -ne $installedProperty -and -not [bool]$installedProperty.Value) {
+        # A failed first setup may have adopted an existing ZIP installation.
+        # Removing its maintenance entry must not remove that prior runtime.
+        return
+    }
     $scripts = $state.scriptsDir
     $manifestPath = Join-Path $scripts 'manifest.json'
     if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
@@ -166,8 +172,16 @@ try {
                 scriptsDir = $request.ScriptsDir; obsConfigRoot = $request.ObsConfigRoot
                 version = [IO.File]::ReadAllText((Join-Path $payload 'VERSION')).Trim()
                 licenseHash = (Get-FileHash -LiteralPath (Join-Path $payload 'LICENSE')).Hash
+                runtimeInstalled = $false
             }
-            # Reserve and flush the inventory before touching the OBS files.
+            # A failed first setup must still have a usable uninstaller. Its
+            # inventory only owns maintenance files until deployment commits.
+            # Failed upgrades retain the previous committed inventory instead.
+            if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+                [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), $utf8)
+            }
+            $state.runtimeInstalled = $true
+            # Reserve and flush the successful inventory before OBS mutation.
             $pendingState = Join-Path $AppDir 'deployment-state.pending.json'
             [IO.File]::WriteAllText($pendingState, ($state | ConvertTo-Json), $utf8)
             & (Join-Path $payload 'install.ps1') @parameters

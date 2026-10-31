@@ -120,6 +120,22 @@ try {
     $recovery = @(Get-ChildItem -LiteralPath $scriptsDirectory -Directory -Filter '.game-replay-uninstall-*' | Where-Object { Test-Path (Join-Path $_.FullName 'recovery.json') })
     Assert-True ($recovery.Count -ge 1) 'Uninstall did not keep recovery backups.'
     Write-Host 'PASS uninstall retains clips, config, unrelated sources/scripts, and recovery backups'
+
+    # A failed first EXE setup can encounter a pre-existing ZIP installation.
+    # Its maintenance-only uninstall must preserve that previous runtime.
+    [IO.File]::WriteAllText($scriptPath, '-- PRE-EXISTING ZIP RUNTIME', $utf8)
+    [IO.File]::WriteAllText((Join-Path $scriptsDirectory 'manifest.json'), '{"name":"obs-game-replay-automation","version":"0.6.0"}', $utf8)
+    [IO.File]::AppendAllText($configPath, "`r`ngame_capture_source=Duplicate`r`n", $utf8)
+    $failedFreshHash = (Get-FileHash -LiteralPath $configPath).Hash
+    Invoke-Setup 'failed-first-setup' $false
+    Assert-True ([IO.File]::ReadAllText($scriptPath) -eq '-- PRE-EXISTING ZIP RUNTIME') 'Failed first setup changed the previous ZIP runtime.'
+    $state = [IO.File]::ReadAllText((Join-Path $appDirectory 'deployment-state.json')) | ConvertFrom-Json
+    Assert-True ($state.runtimeInstalled -eq $false) 'Failed first setup claimed ownership of the previous runtime.'
+    Invoke-Uninstall 'failed-first-setup-cleanup'
+    Assert-True (-not (Test-Path $uninstallKey)) 'Failed first setup could not be removed from Installed Apps.'
+    Assert-True ([IO.File]::ReadAllText($scriptPath) -eq '-- PRE-EXISTING ZIP RUNTIME') 'Maintenance cleanup removed the previous ZIP runtime.'
+    Assert-True ((Get-FileHash -LiteralPath $configPath).Hash -eq $failedFreshHash) 'Maintenance cleanup changed user configuration.'
+    Write-Host 'PASS failed first setup reports failure and remains removable without deleting a previous ZIP installation'
     $completed = $true
 } finally {
     if ($null -ne $fixtureProcess -and -not $fixtureProcess.HasExited) { Stop-Process -Id $fixtureProcess.Id }
