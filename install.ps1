@@ -27,6 +27,9 @@ param(
     [switch]$NonInteractive
 )
 
+# A child Windows PowerShell process may inherit PowerShell 7's module paths
+# from the updater. Resolve this host's bundled commands before inherited ones.
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules') + [IO.Path]::PathSeparator + $env:PSModulePath
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'installation.ps1')

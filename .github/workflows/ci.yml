@@ -34,7 +34,9 @@ jobs:
         run: ./build-installer.ps1 -CompilerPath "$env:RUNNER_TEMP\inno\compiler\ISCC.exe" -OutputDir "$env:RUNNER_TEMP\obs-game-replay-dist" -SkipPackage
 
       - name: Test executable installation, upgrade and uninstall
-        shell: powershell
+        # Match the release workflow: start Setup from PS7, then exercise its
+        # actual Windows PowerShell 5.1 bridge with the inherited environment.
+        shell: pwsh
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
           ./tests/release-verification-tests.ps1 -SetupPath "$env:RUNNER_TEMP\obs-game-replay-dist\obs-game-replay-automation-$version-setup.exe"

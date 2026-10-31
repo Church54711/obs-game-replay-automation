@@ -6,6 +6,10 @@ param(
     [string]$RequestFile,
     [Parameter(Mandatory = $true)][string]$ResultFile
 )
+# Setup can be launched from PowerShell 7, whose PSModulePath is inherited by
+# this Windows PowerShell helper. Prefer this host's bundled modules so a PS7
+# Utility module cannot hide Get-FileHash and other PS5.1 commands.
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules') + [IO.Path]::PathSeparator + $env:PSModulePath
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $product = 'obs-game-replay-automation'

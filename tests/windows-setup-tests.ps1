@@ -164,6 +164,13 @@ try {
 
     # A failed first EXE setup can encounter a pre-existing ZIP installation.
     # Its maintenance-only uninstall must preserve that previous runtime.
+    # Use a separate pre-migration config: the prior uninstall intentionally
+    # retained canonical preferences, which correctly supersede the sidecar.
+    $legacyConfigDirectory = Join-Path $testRoot 'Legacy OBS config'
+    New-Item -ItemType Directory -Path $legacyConfigDirectory -Force | Out-Null
+    $arguments = @($arguments | Where-Object { $_ -notlike '/OBSCONFIGROOT=*' }) +
+        @('/OBSCONFIGROOT="' + $legacyConfigDirectory + '"')
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $legacyConfigDirectory 'game-replay-automation\settings.json'))) 'Legacy fixture unexpectedly contains migrated preferences.'
     [IO.File]::WriteAllText($scriptPath, '-- PRE-EXISTING ZIP RUNTIME', $utf8)
     [IO.File]::WriteAllText((Join-Path $scriptsDirectory 'manifest.json'), '{"name":"obs-game-replay-automation","version":"0.6.0"}', $utf8)
     [IO.File]::AppendAllText($configPath, "`r`ngame_capture_source=Duplicate`r`n", $utf8)
@@ -176,6 +183,7 @@ try {
     Assert-True (-not (Test-Path $uninstallKey)) 'Failed first setup could not be removed from Installed Apps.'
     Assert-True ([IO.File]::ReadAllText($scriptPath) -eq '-- PRE-EXISTING ZIP RUNTIME') 'Maintenance cleanup removed the previous ZIP runtime.'
     Assert-True ((Get-FileHash -LiteralPath $configPath).Hash -eq $failedFreshHash) 'Maintenance cleanup changed user configuration.'
+    Assert-True ((Get-FileHash -LiteralPath $prefsPath).Hash -eq $prefsHash) 'Legacy maintenance cleanup changed retained preferences from the prior installation.'
     Write-Host 'PASS failed first setup reports failure and remains removable without deleting a previous ZIP installation'
     $completed = $true
 } finally {
