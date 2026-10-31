@@ -13,6 +13,28 @@ administrator permission.
 
 ## Quick install
 
+For releases with a Windows installer, download
+`obs-game-replay-automation-<version>-setup.exe` from the
+[Releases page](https://github.com/Church54711/obs-game-replay-automation/releases).
+Close OBS, run Setup, approve the administrator prompt, and confirm the detected
+OBS folder. Fresh installations offer a replay-folder chooser; upgrades keep
+the existing configuration exactly. Daily update notifications are optional.
+
+Setup adds Start Menu shortcuts and an entry in Windows **Settings > Apps >
+Installed apps**. On a first install, follow the last setup page to add the Lua
+script in **OBS > Tools > Scripts**, then configure the capture sources below.
+This project is an OBS Lua script, so OBS must load it through Tools > Scripts.
+There is no native plugin DLL to discover automatically.
+
+Uninstall with OBS closed. Uninstall removes the automation's runtime files and
+its exact script registration from existing scene collections. It keeps replay
+clips, the sidecar configuration, capture sources, profiles, unrelated scripts,
+and recovery backups. Per-game settings and hotkeys stored in that script's OBS
+registration are retained in the uninstall recovery copies of the scene files.
+The initial setup builds are unsigned; Windows may show an unknown publisher.
+
+The ZIP package is also available:
+
 1. Close OBS Studio completely.
 2. Extract the release zip.
 3. Double-click:
@@ -41,6 +63,16 @@ For an unattended install from an already elevated PowerShell:
 
 Use -ObsRoot for a nonstandard installed OBS location, or -ScriptsDir to supply
 the final OBS scripts directory directly.
+
+The EXE also accepts `/OBSROOT="D:\OBS Studio"`,
+`/OBSCONFIGROOT="D:\OBS settings\obs-studio"`, `/REPLAYROOT="D:\Replays"`,
+and `/SCRIPTSDIR="D:\Custom scripts"`. Use the OBS configuration folder chooser
+for portable OBS (`<OBS folder>\config\obs-studio`) or another Windows account.
+Close OBS yourself; Setup never force-closes it. Existing managed installations
+must be uninstalled before changing their script or OBS configuration location.
+For unattended setup, add `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` and run from
+an elevated terminal. `/CURRENTUSER` supports writable portable OBS locations;
+the default installation into Program Files requires administrator permission.
 
 Fresh installs use `data\scripts\obs-game-replay-automation` inside the OBS
 installation. Existing installations retain their original Lua path and config,
@@ -309,6 +341,24 @@ verification.
 The release zip contains only the files needed by recipients. It does not
 contain portable OBS, tests, personal paths, or prior release folders.
 
+To build the Windows setup EXE with Inno Setup 6.4+ or 7:
+
+    .\build-installer.ps1 -CompilerPath "C:\Program Files\Inno Setup 7\ISCC.exe"
+
+The builder validates/packages the payload, compiles the wizard, and writes an
+EXE plus SHA-256 checksum under `dist`. A pinned, signature- and checksum-verified
+portable compiler can be prepared with `tests/get-inno-setup.ps1 -Destination
+"<fresh folder>"`. It makes no Start Menu or Installed Apps entries.
+
+With OBS closed, test the actual setup and uninstaller in temporary folders:
+
+    .\tests\windows-setup-tests.ps1 -SetupPath ".\dist\obs-game-replay-automation-0.7.0-setup.exe"
+
+This uses a temporary per-user Installed Apps entry, refuses to replace an
+existing per-user installation, and leaves the real OBS installation untouched.
+It exercises running-OBS refusal, Unicode paths, upgrade preservation, late
+failure, locked-file uninstall, and removal without deleting saved user data.
+
 ## Publish a GitHub release
 
 The repository validates every push and pull request on a GitHub-hosted Windows
@@ -319,7 +369,7 @@ commit the change, and push the matching tag:
     git push origin v0.7.0
 
 The release workflow reruns package validation, rejects a mismatched tag,
-publishes the versioned ZIP and checksum, creates stable latest-download aliases
+builds/tests the setup EXE, publishes the versioned EXE and ZIP with checksums, creates stable latest-download aliases
 for the website, and writes machine-readable latest.json metadata.
 
 ## License
@@ -341,6 +391,8 @@ without warranty. See LICENSE for the complete terms.
 - Update OBS Game Replay Automation.cmd: one-click updater launcher.
 - package.ps1: source-only release builder and validation (not included in the
   recipient zip).
+- build-installer.ps1 and installer/: Windows setup compiler, wizard, and guarded
+  installation/uninstall helper (not included in the ZIP).
 - manifest.json and VERSION: release metadata.
 
 ## Troubleshooting

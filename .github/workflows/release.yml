@@ -66,6 +66,18 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "output_directory=$outputDirectory" >> $env:GITHUB_OUTPUT
 
+      - name: Download verified portable setup compiler
+        shell: pwsh
+        run: ./tests/get-inno-setup.ps1 -Destination "$env:RUNNER_TEMP\inno"
+
+      - name: Build and test Windows installer
+        shell: pwsh
+        run: |
+          $outputDirectory = '${{ steps.package.outputs.output_directory }}'
+          $version = '${{ steps.package.outputs.version }}'
+          ./build-installer.ps1 -CompilerPath "$env:RUNNER_TEMP\inno\compiler\ISCC.exe" -OutputDir $outputDirectory -SkipPackage
+          ./tests/windows-setup-tests.ps1 -SetupPath "$outputDirectory\obs-game-replay-automation-$version-setup.exe" -EvidenceDir "$env:RUNNER_TEMP\setup-evidence"
+
       - name: Publish release assets
         shell: pwsh
         env:
@@ -78,6 +90,8 @@ jobs:
             (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION.zip.sha256.txt"),
             (Join-Path $env:OUTPUT_DIRECTORY 'obs-game-replay-automation-latest.zip'),
             (Join-Path $env:OUTPUT_DIRECTORY 'obs-game-replay-automation-latest.zip.sha256.txt'),
+            (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION-setup.exe"),
+            (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION-setup.exe.sha256.txt"),
             (Join-Path $env:OUTPUT_DIRECTORY 'latest.json')
           )
           & gh release create $env:GITHUB_REF_NAME @assets `

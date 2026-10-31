@@ -2,6 +2,13 @@
 
 ## 0.7.0 - 2026-10-30
 
+- Added a standard Windows setup EXE with OBS and configuration folder selection,
+  fresh-install replay folder selection, optional update notifications, Start
+  Menu shortcuts, upgrade preservation, and a Windows Installed Apps entry.
+- Added guarded uninstall with scene registration cleanup, recovery copies, and
+  retained clips/configuration. Automated tests exercise the actual EXE and
+  uninstaller; release workflows now build and publish the EXE and checksum.
+
 - Respect manual replay-buffer stops and buffers started by the user. Added
   Pause, Resume, Ignore current game for this session, Save replay, and Open
   last saved clip controls with configurable OBS hotkeys.
