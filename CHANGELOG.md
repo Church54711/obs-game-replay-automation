@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 - Unreleased
+## 0.8.0 - 2026-10-31
 
 - Unified install, update, and uninstall paths in an installation record. ZIP
   updates preserve custom OBS configuration paths and synchronize EXE maintenance
