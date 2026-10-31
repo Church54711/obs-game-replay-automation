@@ -5,7 +5,7 @@ the foreground fullscreen game, points Game Capture and Application Audio
 Capture at that game, routes saved replays into per-game folders, and manages
 the replay buffer. Merely detecting a fullscreen app does not create a folder.
 
-Version 0.6.0 targets installed OBS Studio on Windows x64. Automated runtime
+Version 0.7.0 targets installed OBS Studio on Windows x64. Automated runtime
 tests cover OBS Studio 32.2.2 and 33.0.1 in Simple and Advanced output modes.
 The normal setup flow installs
 into the detected OBS Studio folder under Program Files and requests
@@ -81,6 +81,74 @@ The active game scene needs these sources:
 The names can be changed in the config. The script warns and keeps retrying if
 a source is missing, so adding the source later does not require restarting
 OBS.
+
+## Controls, status, and hotkeys
+
+Open **Tools > Scripts > game-replay-auto.lua**. The status panel reports the
+detected game, destination, buffer state, last confirmed clip, and warnings.
+Click **Refresh status** for a current snapshot; action buttons also refresh it.
+This panel is not a continuously updating dock.
+
+- **Pause automation** stops a buffer owned by this script and clears its capture
+  targets. A buffer you started yourself is left running.
+- **Resume / clear session ignores** resumes automatic detection, clears manual
+  stop suppression and session-only ignores, and retains permanent exclusions.
+- **Ignore current game for this session** suppresses that game process until
+  Resume or script reload. It does not change your permanent configuration.
+- **Save replay now** requests one save and warns if OBS has not confirmed it
+  within 30 seconds. OBS 33's save-start event also monitors native save requests.
+- **Open last saved clip** opens the actual path returned by OBS in your default
+  media player. It never guesses the filename.
+
+Assign shortcuts under **Settings > Hotkeys**: Pause replay automation, Resume
+replay automation, Ignore current game for this session, Save replay with
+confirmation, and Open last saved replay. No key combinations are assigned by
+default. Hotkeys persist with the scene collection's script settings.
+
+Stopping the replay buffer manually suppresses automatic restart for the
+tracked game. Resume explicitly clears that suppression. Automation only stops
+or restarts buffers it started; manual buffers retain user ownership.
+
+Enable **Play a sound after a confirmed replay save** for an optional Windows
+notification sound. Save confirmation is always shown in status and the OBS log;
+there are no desktop toast popups. **Warn below free space** defaults to 5 GiB;
+0 disables the low-space threshold. Warnings never delete clips or change quality.
+
+The optional **fallback replay folder** is disabled by default. When configured,
+it is used only if the selected primary directory is unavailable and the fallback
+already exists. Routing returns to the primary when it becomes available. Low
+free space alone produces a warning, not an automatic destination change.
+
+## Per-game editor
+
+Focus a game, return to Tools > Scripts, then choose **Use current game**. Edit
+the executable, optional title match, folder name, duration, fullscreen policy,
+and **Allow this game**, then click **Apply game settings**. Alternatively, type
+an executable name directly. Use a title match to distinguish games sharing
+`javaw.exe`; current-game selection suggests the title for Java games.
+
+Editor rules are saved with OBS's script settings. They override the matching
+sidecar values for folder, duration, fullscreen, and enabled state, while retaining
+sidecar-only options such as the hook policy. **Remove this editor rule** restores
+sidecar/default behavior. Clearing **Allow this game** adds a permanent exclusion;
+enabling it explicitly opts the match back in. **Apply** is required to commit
+editor changes, and the sidecar file is never rewritten by the editor.
+
+## Replay reliability
+
+Automation waits for the configured source names/types and an existing output
+directory. It rechecks sources while the game remains tracked, including while
+you are in OBS, and recovers recreated sources. The OBS Replay Buffer option
+must be enabled in Settings > Output; if its output is unavailable, status/logs
+explain how to enable it without repeated start attempts.
+
+Profile paths and replay duration are changed only temporarily for buffer startup
+and restored after startup, failure, profile switch, or script unload. Any user
+changes made during startup are preserved. Replay routing is applied to the replay
+output rather than permanently changing the normal recording destination.
+
+Malformed, unreadable, or partially written sidecar edits retain the last valid
+configuration and show a warning. Valid edits are accepted after two stable reads.
 
 ## Change the replay folder
 
@@ -172,6 +240,19 @@ source is already safe and untargeted.
 Use -OverwriteConfig only when you intentionally want to reset all settings to
 the release defaults. A backup is still created first.
 
+Installation holds a per-directory lock, stages and hashes new files, backs up
+existing runtime files/configuration/scene collections, verifies every copied
+file, and commits VERSION/manifest last. On a file, config, or scene-migration
+failure, it restores the previous files and removes newly installed files.
+An incomplete rollback retains recovery data and reports its location.
+
+Successful upgrades also retain a `.game-replay-install-<id>` recovery directory
+beside the Lua script. Its `recovery.json` maps original paths to backed-up files
+and hashes. No recovery directories are automatically deleted after successful
+installs. Shortcut or scheduled-notification setup failures produce warnings
+without undoing a verified installation. This is installation rollback, not
+automatic rollback after a later OBS/game runtime problem.
+
 ## Main settings
 
     root_folder=%USERPROFILE%\Videos\OBS Replays
@@ -234,8 +315,8 @@ The repository validates every push and pull request on a GitHub-hosted Windows
 runner. To publish, update VERSION, manifest.json, and CHANGELOG.md together,
 commit the change, and push the matching tag:
 
-    git tag v0.6.0
-    git push origin v0.6.0
+    git tag v0.7.0
+    git push origin v0.7.0
 
 The release workflow reruns package validation, rejects a mismatched tag,
 publishes the versioned ZIP and checksum, creates stable latest-download aliases

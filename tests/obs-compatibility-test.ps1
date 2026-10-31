@@ -34,6 +34,9 @@ try {
     $config = Join-Path $runtime 'config\obs-studio'
     $output = Join-Path $runtime 'replays'
     New-Item -ItemType Directory -Force $output | Out-Null
+    $recording = Join-Path $runtime 'recordings'
+    New-Item -ItemType Directory -Force $recording | Out-Null
+    $recordingObs = $recording.Replace('\', '/')
     $outputObs = $output.Replace('\', '/')
     $userIni = "[General]`nFirstRun=true`n[Basic]`nProfile=Compatibility`nProfileDir=Compatibility`nSceneCollection=Compatibility`nSceneCollectionFile=Compatibility`n[BasicWindow]`nPreviewEnabled=false`n"
     Write-Utf8 (Join-Path $config 'global.ini') $userIni
@@ -45,7 +48,7 @@ Name=Compatibility
 Mode=$Mode
 FilenameFormatting=%CCYY-%MM/%CCYY-%MM-%DD %hh-%mm-%ss
 [SimpleOutput]
-FilePath=$outputObs
+FilePath=$recordingObs
 RecFormat2=mkv
 StreamEncoder=x264
 RecEncoder=x264
@@ -59,7 +62,7 @@ RecAudioEncoder=aac
 StreamAudioEncoder=aac
 [AdvOut]
 RecType=Standard
-RecFilePath=$outputObs
+RecFilePath=$recordingObs
 RecFormat2=mkv
 RecEncoder=obs_x264
 RecAudioEncoder=ffmpeg_aac
@@ -104,7 +107,7 @@ ChannelSetup=Stereo
         if ($logs.Count -gt 0) {
             $logText = Get-Content -LiteralPath $logs[0].FullName -Raw
             if ($logText -match 'COMPATIBILITY PASSED:') { $passed = $true; break }
-            if ($logText -match '\[Lua: game-replay-auto.lua\].*(Error|Failed|Error loading|not supported)') { throw 'Lua runtime failure; see retained OBS log' }
+            if ($logText -match '\[Lua: game-replay-auto.lua\].*(Error|Failed|Error loading|not supported|Lifecycle timeout)') { throw 'Lua runtime failure; see retained OBS log' }
         }
         if ($process.HasExited) { throw "Test OBS exited: $($process.ExitCode)" }
         Start-Sleep -Milliseconds 250

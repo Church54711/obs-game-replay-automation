@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.0 - 2026-10-30
+
+- Respect manual replay-buffer stops and buffers started by the user. Added
+  Pause, Resume, Ignore current game for this session, Save replay, and Open
+  last saved clip controls with configurable OBS hotkeys.
+- Temporarily apply replay startup settings, then restore the original profile
+  values without overwriting intervening user edits. Handle profile switches,
+  asynchronous start/stop events, and startup timeouts.
+- Revalidate capture sources while tracking a game, recover recreated sources,
+  wait for unavailable destinations, and support an explicitly configured
+  fallback folder. Never create per-game folders until a replay is saved.
+- Show status, destination, buffer state, warnings, and last confirmed replay
+  in Tools > Scripts. Refresh status updates the panel; action buttons also
+  refresh it. Optional save sound and configurable low-space warnings added.
+- Added a per-game editor in Tools > Scripts, including current-game selection,
+  executable/title matching, folder, duration, fullscreen policy, and exclusions.
+  Overrides persist in OBS settings without writing to the protected sidecar.
+- Retain the last valid sidecar configuration after malformed/partial edits.
+- Transactional installation stages and verifies files, backs up runtime/config/
+  scene files, validates copied files, and restores previous bytes on failure.
+  Successful installs retain recovery files and commit version metadata last.
+- Added lifecycle, editor, storage, save-feedback, installer fault-injection,
+  and real-OBS serialization/source-recovery/manual-stop acceptance tests.
+
 ## 0.6.0 - 2026-10-30
 
 - Added OBS 33.0.1 compatibility validation with real synthetic replay saves

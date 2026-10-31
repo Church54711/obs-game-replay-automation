@@ -54,3 +54,14 @@ public static class ReplayLuaTestRunner {
 $source = "local automation_source = [====[`n" + [IO.File]::ReadAllText((Join-Path $ProjectRoot 'game-replay-auto.lua')) + "`n]====]`n" +
     [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'compatibility-tests.lua'))
 Write-Host ([ReplayLuaTestRunner]::Run([IO.Path]::GetFullPath($LuaLibrary), $source))
+
+$mock = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'obs-mock.lua'))
+$production = [IO.File]::ReadAllText((Join-Path $ProjectRoot 'game-replay-auto.lua'))
+# Fill unused UI-only bindings; behavioral mocks implement all tested mutations.
+$stubs = "`n"
+foreach ($match in [regex]::Matches($production, 'obs\.([a-zA-Z_0-9]+)\(')) {
+    $name = $match.Groups[1].Value
+    $stubs += "obslua.$name = obslua.$name or function() end`n"
+}
+$behavior = $mock + $stubs + $production + "`n" + [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lua-behavior-tests.lua'))
+Write-Host ([ReplayLuaTestRunner]::Run([IO.Path]::GetFullPath($LuaLibrary), $behavior))

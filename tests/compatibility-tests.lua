@@ -1,5 +1,6 @@
 local symbols = {}
 for name in automation_source:gmatch('obs%.([%w_]+)%(') do symbols[name] = true end
+for _, name in ipairs({'config_get_bool','config_get_string','config_set_bool','config_set_int','config_set_string'}) do symbols[name] = true end
 local tests = 0
 local function load_fixture(missing, platform)
     local calls, api = {}, {}
@@ -22,7 +23,7 @@ local function load_fixture(missing, platform)
     return env, calls
 end
 local normal = load_fixture()
-assert(type(normal.script_load) == 'function', 'Current API should load')
+assert(type(normal.script_load) == 'function', 'Current API should load: ' .. normal.script_description())
 tests = tests + 1
 for name in pairs(symbols) do
     local env, calls = load_fixture(name)

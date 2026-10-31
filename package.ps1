@@ -88,6 +88,7 @@ if (-not (Test-Path -LiteralPath $releaseSystemTests -PathType Leaf)) {
 }
 & $releaseSystemTests -ProjectRoot $PSScriptRoot
 & (Join-Path $PSScriptRoot 'tests\install-path-tests.ps1')
+& (Join-Path $PSScriptRoot 'tests\installer-behavior-tests.ps1') -ProjectRoot $PSScriptRoot
 & (Join-Path $PSScriptRoot 'update.ps1') -SelfTest
 
 $configContent = [System.IO.File]::ReadAllText($configFile)

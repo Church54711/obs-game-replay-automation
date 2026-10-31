@@ -22,9 +22,22 @@ The appended test-only Lua driver substitutes foreground discovery, creates
 hidden Game Capture / Application Audio Capture sources, and encodes a visible
 color source using x264. It checks real source retargeting, no game folder before
 save, a non-empty MKV under the game/date directory, and restoration of the
-filename format. It does not test actual game injection or captured audio.
+filename format. It also checks profile restoration, native properties creation,
+editor settings serialization, source removal/recreation, manual stop suppression,
+and Pause/Resume in real OBS. It does not test actual game injection, captured
+audio, physical key presses, notification audibility, or visually inspect the
+Scripts dialog. The properties and callbacks are exercised through OBS's APIs.
 `ffprobe` or `ffmpeg -v error -i <replay> -f null -` can independently validate
 the retained media. Runtime tests require a Windows desktop/D3D environment.
+
+`lua-behavior-tests.lua` exercises pause/resume and ownership, profile switches,
+source loss, drive recovery/fallback, low-space warnings, save confirmation and
+timeouts, editor validation/precedence, and status. `installer-behavior-tests.ps1`
+runs real file operations in disposable directories, replacing only process
+discovery and injecting a corrupted copy. It verifies rollback after locked
+files, directory collisions, late configuration errors, and hash mismatches,
+plus config preservation and retained recovery data after successful updates.
+Neither suite changes the installed OBS or requires closing it.
 
 The Lua guard tests remove each required API/event independently and check that
 startup disables automation without mutating OBS. Installer path tests load only

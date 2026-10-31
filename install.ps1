@@ -43,7 +43,7 @@ function ConvertTo-AbsolutePath {
     if ([string]::IsNullOrWhiteSpace($value)) {
         throw "$Label cannot be empty."
     }
-    if (-not [System.IO.Path]::IsPathRooted($value)) {
+    if ($value -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)') {
         throw "$Label must be an absolute path: $value"
     }
 
@@ -450,15 +450,16 @@ function Set-SafeGameCaptureHookDefaults {
             continue
         }
 
-        $matchingSources = @($collection.sources | Where-Object {
-            $_.name -eq $GameCaptureSourceName -and
-            ($_.id -eq "game_capture" -or $_.unversioned_id -eq "game_capture")
+        $matchingSources = @((Get-OptionalPropertyValue -InputObject $collection -Name 'sources') | Where-Object {
+            $null -ne $_ -and (Get-OptionalPropertyValue -InputObject $_ -Name 'name') -eq $GameCaptureSourceName -and
+            ((Get-OptionalPropertyValue -InputObject $_ -Name 'id') -eq "game_capture" -or
+                (Get-OptionalPropertyValue -InputObject $_ -Name 'unversioned_id') -eq "game_capture")
         })
         $changedInFile = 0
         foreach ($source in $matchingSources) {
             $sourceChanged = $false
-            if ($null -eq $source.PSObject.Properties["settings"]) {
-                $source | Add-Member -MemberType NoteProperty -Name "settings" -Value ([pscustomobject]@{})
+            if ($null -eq (Get-OptionalPropertyValue -InputObject $source -Name 'settings')) {
+                $source | Add-Member -MemberType NoteProperty -Name "settings" -Value ([pscustomobject]@{}) -Force
             }
             $hookProperty = $source.settings.PSObject.Properties["anti_cheat_hook"]
             if ($null -eq $hookProperty) {
@@ -469,7 +470,10 @@ function Set-SafeGameCaptureHookDefaults {
                 $sourceChanged = $true
             }
             $windowProperty = $source.settings.PSObject.Properties["window"]
-            if ($null -ne $windowProperty -and -not [string]::IsNullOrWhiteSpace([string]$windowProperty.Value)) {
+            if ($null -eq $windowProperty) {
+                $source.settings | Add-Member -MemberType NoteProperty -Name 'window' -Value ''
+                $sourceChanged = $true
+            } elseif (-not [string]::IsNullOrWhiteSpace([string]$windowProperty.Value)) {
                 $windowProperty.Value = ""
                 $sourceChanged = $true
             }
@@ -493,7 +497,8 @@ function Set-SafeGameCaptureHookDefaults {
             $verifiedCollection = [System.IO.File]::ReadAllText($scenePath.FullName) | ConvertFrom-Json
             $unsafeSources = @($verifiedCollection.sources | Where-Object {
                 $_.name -eq $GameCaptureSourceName -and
-                ($_.id -eq "game_capture" -or $_.unversioned_id -eq "game_capture") -and
+                ((Get-OptionalPropertyValue -InputObject $_ -Name 'id') -eq "game_capture" -or
+                    (Get-OptionalPropertyValue -InputObject $_ -Name 'unversioned_id') -eq "game_capture") -and
                 ($_.settings.anti_cheat_hook -ne $false -or
                     -not [string]::IsNullOrWhiteSpace([string]$_.settings.window))
             })
@@ -513,7 +518,7 @@ function Set-SafeGameCaptureHookDefaults {
         SceneDirectory = $sceneDirectory
         FilesUpdated = $filesUpdated
         SourcesUpdated = $sourcesUpdated
-        BackupPaths = @($backupPaths)
+        BackupPaths = $backupPaths.ToArray()
     }
 }
 
@@ -531,6 +536,10 @@ function Copy-FileUnlessSamePath {
         return
     }
     Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+    if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256).Hash) {
+        throw "Installed file verification failed: $destinationPath"
+    }
 }
 
 function Get-UpdateTask {
@@ -709,6 +718,13 @@ foreach ($requiredFile in @(
     }
 }
 
+$sourceVersion = [System.IO.File]::ReadAllText($versionSource).Trim()
+$sourceManifest = [System.IO.File]::ReadAllText($manifestSource) | ConvertFrom-Json
+if ($sourceVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$' -or
+    [string]$sourceManifest.version -ne $sourceVersion -or [string]$sourceManifest.license -ne '0BSD') {
+    throw 'Installer VERSION and manifest.json are invalid or do not agree.'
+}
+
 Write-Host ""
 Write-Host "OBS Game Replay Automation setup"
 Write-Host ""
@@ -750,46 +766,131 @@ $selectedOutputRoot = Select-OutputRoot -ExistingConfigPath $configTarget
 $updateCheckPreference = Select-UpdateCheckPreference
 
 New-Item -ItemType Directory -Path $resolvedScriptsDir -Force | Out-Null
-Copy-FileUnlessSamePath -Source $scriptSource -Destination $scriptTarget
-Copy-FileUnlessSamePath -Source $manifestSource -Destination $manifestTarget
-Copy-FileUnlessSamePath -Source $versionSource -Destination $versionTarget
-Copy-FileUnlessSamePath -Source $licenseSource -Destination $licenseTarget
-Copy-FileUnlessSamePath -Source $updaterSource -Destination $updaterTarget
-Copy-FileUnlessSamePath -Source $updaterLauncherSource -Destination $updaterLauncherTarget
-
-$configBackup = $null
-if ($OverwriteConfig -or -not $configExisted) {
-    if ($configExisted) {
-        $configBackup = New-ConfigBackup -ConfigPath $configTarget
+$transactionRoot = Join-Path $resolvedScriptsDir ('.game-replay-install-' + [guid]::NewGuid().ToString('N'))
+$stageRoot = Join-Path $transactionRoot 'stage'
+$backupRoot = Join-Path $transactionRoot 'backup'
+$snapshots = [System.Collections.Generic.List[object]]::new()
+$rollbackFailed = $false
+$mutationStarted = $false
+$commitSucceeded = $false
+$lockStream = $null
+$lockPath = Join-Path $resolvedScriptsDir '.game-replay-install.lock'
+try {
+    # Only one installer can write this installation at a time.
+    $lockStream = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None')
+    New-Item -ItemType Directory -Path $stageRoot, $backupRoot -Force | Out-Null
+    $runtimeNames = @('game-replay-auto.lua', 'LICENSE', 'update.ps1', 'Update OBS Game Replay Automation.cmd', 'manifest.json', 'VERSION')
+    foreach ($name in $runtimeNames + @('game-replay-auto-config.txt')) {
+        $source = Join-Path $sourceDir $name
+        $staged = Join-Path $stageRoot $name
+        Copy-Item -LiteralPath $source -Destination $staged
+        if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $staged).Hash) {
+            throw "Staged file verification failed: $name"
+        }
     }
-    Copy-FileUnlessSamePath -Source $configSource -Destination $configTarget
-}
+    $resolvedObsConfigRoot = Get-ResolvedObsConfigRoot
+    $sceneDirectory = Join-Path $resolvedObsConfigRoot 'basic\scenes'
+    $targets = @($runtimeNames + @('game-replay-auto-config.txt') | ForEach-Object { Join-Path $resolvedScriptsDir $_ })
+    if (Test-Path -LiteralPath $sceneDirectory -PathType Container) {
+        $targets += @(Get-ChildItem -LiteralPath $sceneDirectory -Filter '*.json' -File | ForEach-Object { $_.FullName })
+    }
+    foreach ($target in $targets) {
+        $backup = $null
+        $hash = $null
+        if (Test-Path -LiteralPath $target -PathType Container) {
+            throw "An installation file path is occupied by a directory: $target"
+        }
+        if (Test-Path -LiteralPath $target -PathType Leaf) {
+            # Fail before replacing anything if a destination is locked.
+            $probe = [System.IO.File]::Open($target, 'Open', 'ReadWrite', 'None')
+            $probe.Dispose()
+            $backup = Join-Path $backupRoot ([string]$snapshots.Count)
+            Copy-Item -LiteralPath $target -Destination $backup
+            $hash = (Get-FileHash -LiteralPath $backup).Hash
+        }
+        $snapshots.Add([pscustomobject]@{ Target = $target; Backup = $backup; Hash = $hash })
+    }
+    $mutationStarted = $true
+    foreach ($name in $runtimeNames | Where-Object { $_ -notin @('VERSION', 'manifest.json') }) {
+        Copy-FileUnlessSamePath -Source (Join-Path $stageRoot $name) -Destination (Join-Path $resolvedScriptsDir $name)
+    }
 
-$setConfigParameters = @{
-    ConfigPath = $configTarget
-    SelectedOutputRoot = $selectedOutputRoot
-    BackupBeforeWrite = ($configExisted -and -not $OverwriteConfig)
-}
-$rootBackup = Set-ConfigOutputRoot @setConfigParameters
-if ([string]::IsNullOrWhiteSpace($configBackup)) {
-    $configBackup = $rootBackup
-}
-if ($preserveConfigExactly) {
-    $updatedConfigHash = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
-    if ($updatedConfigHash -ne $existingConfigHash) {
-        [System.IO.File]::WriteAllBytes($configTarget, $existingConfigBytes)
-        throw 'The upgrade attempted to change the existing user configuration. The exact pre-upgrade configuration was restored.'
+    $configBackup = $null
+    if ($OverwriteConfig -or -not $configExisted) {
+        if ($configExisted) {
+            $configBackup = New-ConfigBackup -ConfigPath $configTarget
+        }
+        Copy-FileUnlessSamePath -Source (Join-Path $stageRoot 'game-replay-auto-config.txt') -Destination $configTarget
+    }
+
+    $setConfigParameters = @{
+        ConfigPath = $configTarget
+        SelectedOutputRoot = $selectedOutputRoot
+        BackupBeforeWrite = ($configExisted -and -not $OverwriteConfig)
+    }
+    $rootBackup = Set-ConfigOutputRoot @setConfigParameters
+    if ([string]::IsNullOrWhiteSpace($configBackup)) {
+        $configBackup = $rootBackup
+    }
+    if ($preserveConfigExactly) {
+        $updatedConfigHash = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
+        if ($updatedConfigHash -ne $existingConfigHash) {
+            [System.IO.File]::WriteAllBytes($configTarget, $existingConfigBytes)
+            throw 'The upgrade attempted to change the existing user configuration. The exact pre-upgrade configuration was restored.'
+        }
+    }
+
+    $resolvedObsConfigRoot = Get-ResolvedObsConfigRoot
+    $gameCaptureSourceName = Get-ConfiguredGameCaptureSourceName -ConfigPath $configTarget
+    $sceneMigration = Set-SafeGameCaptureHookDefaults `
+        -ConfigRoot $resolvedObsConfigRoot `
+        -GameCaptureSourceName $gameCaptureSourceName
+    # Commit release metadata only after files, config, and scene migration pass.
+    Copy-FileUnlessSamePath -Source (Join-Path $stageRoot 'manifest.json') -Destination $manifestTarget
+    Copy-FileUnlessSamePath -Source (Join-Path $stageRoot 'VERSION') -Destination $versionTarget
+    # Keep a recovery inventory and the prior files after successful upgrades.
+    [IO.File]::WriteAllText((Join-Path $transactionRoot 'recovery.json'),
+        ($snapshots.ToArray() | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+    $commitSucceeded = $true
+} catch {
+    $installFailure = $_
+    if ($mutationStarted) {
+        for ($index = $snapshots.Count - 1; $index -ge 0; $index--) {
+            $snapshot = $snapshots[$index]
+            try {
+                if ($null -eq $snapshot.Backup) {
+                    if (Test-Path -LiteralPath $snapshot.Target -PathType Leaf) {
+                        Remove-Item -LiteralPath $snapshot.Target -Force
+                    }
+                } elseif (-not (Test-Path -LiteralPath $snapshot.Target -PathType Leaf) -or
+                    (Get-FileHash -LiteralPath $snapshot.Target).Hash -ne $snapshot.Hash) {
+                    Copy-Item -LiteralPath $snapshot.Backup -Destination $snapshot.Target -Force
+                    if ((Get-FileHash -LiteralPath $snapshot.Target).Hash -ne $snapshot.Hash) {
+                        throw "Rollback verification failed: $($snapshot.Target)"
+                    }
+                }
+            } catch {
+                $rollbackFailed = $true
+                Write-Warning "Could not restore '$($snapshot.Target)': $($_.Exception.Message)"
+            }
+        }
+    }
+    if ($rollbackFailed) { throw "Installation failed and rollback was incomplete. Recovery files: $transactionRoot. $installFailure" }
+    throw "Installation failed; the previous installation was preserved. $installFailure"
+} finally {
+    if ($null -ne $lockStream) { $lockStream.Dispose() }
+    $cleanup = [System.IO.Path]::GetFullPath($transactionRoot)
+    if (-not $rollbackFailed -and -not $commitSucceeded -and
+        [System.IO.Directory]::GetParent($cleanup).FullName.TrimEnd('\') -eq $resolvedScriptsDir.TrimEnd('\') -and
+        [System.IO.Path]::GetFileName($cleanup).StartsWith('.game-replay-install-') -and
+        (Test-Path -LiteralPath $cleanup -PathType Container)) {
+        Remove-Item -LiteralPath $cleanup -Recurse -Force
     }
 }
-
-$resolvedObsConfigRoot = Get-ResolvedObsConfigRoot
-$gameCaptureSourceName = Get-ConfiguredGameCaptureSourceName -ConfigPath $configTarget
-$sceneMigration = Set-SafeGameCaptureHookDefaults `
-    -ConfigRoot $resolvedObsConfigRoot `
-    -GameCaptureSourceName $gameCaptureSourceName
 $updateShortcut = $null
 if (-not $NoStartMenuShortcut) {
-    $updateShortcut = Install-UpdateShortcut -LauncherPath $updaterLauncherTarget
+    try { $updateShortcut = Install-UpdateShortcut -LauncherPath $updaterLauncherTarget }
+    catch { Write-Warning "Files were installed and verified, but the update shortcut could not be created: $($_.Exception.Message)" }
 }
 $updateTaskStatus = 'preserved'
 if ($null -ne $updateCheckPreference) {
@@ -805,6 +906,7 @@ if ($null -ne $updateCheckPreference) {
 
 Write-Host ""
 Write-Host "Installation complete."
+Write-Host "  Recovery files: $transactionRoot"
 Write-Host "  OBS script:    $scriptTarget"
 Write-Host "  Config:        $configTarget"
 Write-Host "  Version:       $([System.IO.File]::ReadAllText($versionTarget).Trim())"

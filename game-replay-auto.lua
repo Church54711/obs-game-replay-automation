@@ -4,15 +4,26 @@ obs = obslua
 -- If an API disappears, leave profiles, sources and replay buffers untouched.
 local compatibility_error = nil
 local required_obs_functions = {
+	"calldata_create",
+	"calldata_destroy",
+	"calldata_string",
+	"config_get_bool",
 	"config_get_int",
+	"config_get_string",
+	"config_has_user_value",
+	"config_remove_value",
 	"config_save",
 	"config_set_bool",
 	"config_set_int",
 	"config_set_string",
+	"obs_data_addref",
+	"obs_data_array_release",
+	"obs_data_get_array",
 	"obs_data_get_bool",
 	"obs_data_get_int",
 	"obs_data_get_string",
 	"obs_data_release",
+	"obs_data_set_array",
 	"obs_data_set_bool",
 	"obs_data_set_default_bool",
 	"obs_data_set_default_int",
@@ -21,28 +32,40 @@ local required_obs_functions = {
 	"obs_data_set_string",
 	"obs_enum_sources",
 	"obs_frontend_add_event_callback",
+	"obs_frontend_get_current_profile",
 	"obs_frontend_get_profile_config",
 	"obs_frontend_get_replay_buffer_output",
 	"obs_frontend_remove_event_callback",
 	"obs_frontend_replay_buffer_active",
+	"obs_frontend_replay_buffer_save",
 	"obs_frontend_replay_buffer_start",
 	"obs_frontend_replay_buffer_stop",
 	"obs_get_source_by_name",
+	"obs_hotkey_load",
+	"obs_hotkey_register_frontend",
+	"obs_hotkey_save",
+	"obs_hotkey_unregister",
+	"obs_output_get_proc_handler",
 	"obs_output_get_settings",
 	"obs_output_release",
 	"obs_output_update",
 	"obs_properties_add_bool",
+	"obs_properties_add_button",
 	"obs_properties_add_int",
 	"obs_properties_add_list",
 	"obs_properties_add_path",
 	"obs_properties_add_text",
 	"obs_properties_create",
+	"obs_properties_get",
 	"obs_property_list_add_string",
+	"obs_property_set_description",
 	"obs_source_get_name",
 	"obs_source_get_settings",
 	"obs_source_get_unversioned_id",
 	"obs_source_release",
+	"obs_source_removed",
 	"obs_source_update",
+	"proc_handler_call",
 	"script_log",
 	"source_list_release",
 	"timer_add",
@@ -230,6 +253,16 @@ local missing_source_warnings = {}
 local last_invalid_output_root = nil
 local last_unavailable_output_root = nil
 local output_settings_sections = { "SimpleOutput", "AdvOut" }
+local process_identities = {}
+local identity_last_pruned_at = 0
+local config_pending_raw = nil
+local config_last_error = nil
+local replay_state = { owned = false, starting = false, stopping = false, expected_stop = false,
+	paused_process = nil, ready = false, profile_changing = false }
+local profile_changes = {}
+local controls = { paused = false, ignored = {}, overrides = {}, hotkeys = {},
+    message = "Waiting for a game", last_saved = "", notice = "", disk_cache = {},
+    sound = false, low_space_gib = 5, fallback_root = "", settings = nil }
 
 local function trim(value)
 	return (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -524,6 +557,78 @@ local function parse_text_config(raw)
 	return parsed
 end
 
+local function validate_text_config(raw)
+	local section, line_number, meaningful = "", 0, false
+	local seen = {}
+	local booleans = { fullscreen_only = true, stop_replay_buffer_when_game_exits = true,
+		anti_cheat_hook = true, enabled = true }
+	local numbers = { fullscreen_min_coverage_percent = {1, 100}, match_priority = {0, 2},
+		replay_seconds = {1, 86400}, default_replay_seconds = {1, 86400},
+		game_exit_stop_delay_seconds = {0, 86400}, stop_delay_seconds = {0, 86400} }
+	local globals = { root_folder = true, output_root = true, game_capture_source = true,
+		game_audio_source = true, fullscreen_only = true, fullscreen_min_coverage_percent = true,
+		match_priority = true, replay_seconds = true, default_replay_seconds = true,
+		stop_replay_buffer_when_game_exits = true, game_exit_stop_delay_seconds = true }
+	local overrides = { folder = true, root_folder = true, output_root = true, fullscreen_only = true,
+		match_priority = true, replay_seconds = true, stop_delay_seconds = true,
+		anti_cheat_hook = true, enabled = true }
+	local function valid_value(key, value)
+		if booleans[key] then return config_bool(value) ~= nil end
+		if numbers[key] then
+			local n, bounds = tonumber(value), numbers[key]
+			return n ~= nil and n == math.floor(n) and n >= bounds[1] and n <= bounds[2]
+		end
+		if key == "root_folder" or key == "output_root" then
+			return is_absolute_windows_path(clean_root_path(value))
+		end
+		return trim(value) ~= ""
+	end
+	for line in (raw .. "\n"):gmatch("([^\n]*)\n") do
+		line_number = line_number + 1
+		line = trim(line:gsub("^\239\187\191", ""))
+		if line ~= "" and line:sub(1, 1) ~= "#" then
+			meaningful = true
+			local next_section = line:match("^%[([^%]]+)%]$")
+			local valid = true
+			if next_section then
+				section = trim(next_section):lower()
+				valid = section == "game_folders" or section == "game_overrides" or section == "ignored_exes"
+			elseif section == "ignored_exes" then
+				valid = line:lower():match("^[^=|/\\]+%.exe$") ~= nil
+			elseif section == "game_folders" or section == "game_overrides" then
+				local left, right = line:match("^([^=]+)=(.+)$")
+				valid = left ~= nil and trim(right or "") ~= ""
+				if valid then
+					local exe = parse_match_expression(left)
+					valid = exe:match("%.exe$") ~= nil
+				end
+				if valid and section == "game_overrides" then
+					local keys = {}
+					for part in right:gmatch("[^;]+") do
+						local key, value = trim(part):match("^([%w_]+)%s*=%s*(.-)%s*$")
+						if key then
+							key = key:lower()
+							if not overrides[key] or keys[key] or not valid_value(key, value) then valid = false end
+							keys[key] = true
+						elseif keys.folder or part:find("=", 1, true) then
+							valid = false
+						else keys.folder = true end
+					end
+				end
+			else
+				local key, value = line:match("^([%w_]+)%s*=%s*(.-)%s*$")
+				key = key and key:lower()
+				local canonical = key == "output_root" and "root_folder" or key
+				if key == "default_replay_seconds" then canonical = "replay_seconds" end
+				valid = key ~= nil and globals[key] and not seen[canonical] and valid_value(key, value)
+				if canonical then seen[canonical] = true end
+			end
+			if not valid then return false, "Invalid configuration at line " .. line_number .. ": " .. line end
+		end
+	end
+	return meaningful, meaningful and nil or "Configuration is empty"
+end
+
 local function load_text_config(force)
 	local now = now_seconds()
 	if not force and now - config_last_checked_at < config_reload_interval_seconds then
@@ -532,19 +637,27 @@ local function load_text_config(force)
 	config_last_checked_at = now
 
 	local raw = read_file(get_config_file_path())
-	if raw == nil then
-		if force or config_last_raw ~= nil then
-			config_last_raw = nil
-			apply_base_settings()
-			configuration_revision = configuration_revision + 1
-			return true
+	local valid, problem = false, "Cannot read configuration; retaining the last valid settings"
+	if raw ~= nil then valid, problem = validate_text_config(raw) end
+	if not valid then
+		config_pending_raw = nil
+		if problem ~= config_last_error then
+			obs.script_log(obs.LOG_WARNING, problem .. "; configuration was not replaced.")
+			config_last_error = problem
 		end
-		return false
+		if not force then return false end
+		raw = config_last_raw
+		if raw == nil then apply_base_settings(); return false end
+	elseif config_last_raw ~= nil and raw ~= config_last_raw and raw ~= config_pending_raw then
+		-- Editors may truncate/rewrite the file. Require two identical reads.
+		config_pending_raw = raw
+		if not force then return false end
+		raw = config_last_raw
+	else
+		config_pending_raw = nil
+		config_last_error = nil
 	end
-
-	if not force and raw == config_last_raw then
-		return false
-	end
+	if not force and raw == config_last_raw then return false end
 
 	config_last_raw = raw
 	apply_base_settings()
@@ -713,6 +826,12 @@ local function active_game_process_is_running()
 	if active_game_pid == nil or active_game_exe == nil then
 		return false
 	end
+	if replay_state.identity ~= nil then
+		local handle = replay_state.identity.handle
+		if handle == nil then return false end
+		local code = ffi.new("DWORD[1]", 0)
+		return kernel32.GetExitCodeProcess(handle, code) ~= 0 and tonumber(code[0]) == STILL_ACTIVE
+	end
 	if not is_process_still_active(active_game_pid) then
 		return false
 	end
@@ -734,13 +853,10 @@ local function read_profile_replay_seconds_default()
 		return nil
 	end
 
-	local simple_seconds = tonumber(obs.config_get_int(config, "SimpleOutput", "RecRBTime")) or 0
-	local advanced_seconds = tonumber(obs.config_get_int(config, "AdvOut", "RecRBTime")) or 0
-	if simple_seconds > 0 then
-		profile_default_replay_seconds = simple_seconds
-	elseif advanced_seconds > 0 then
-		profile_default_replay_seconds = advanced_seconds
-	end
+	local mode = obs.config_get_string(config, "Output", "Mode")
+	local section = mode == "Advanced" and "AdvOut" or "SimpleOutput"
+	local seconds = tonumber(obs.config_get_int(config, section, "RecRBTime")) or 0
+	if seconds > 0 then profile_default_replay_seconds = seconds end
 	return profile_default_replay_seconds
 end
 
@@ -809,13 +925,22 @@ local function find_game_override(info)
 	end
 
 	local title_lower = info.title:lower()
+	local result = nil
 	for _, override in ipairs(game_overrides) do
 		if info.exe:lower() == override.exe and (override.title == "" or title_lower:find(override.title, 1, true) ~= nil) then
-			return override
+			result = override
+			break
 		end
 	end
-
-	return nil
+	for _, override in ipairs(controls.overrides) do
+		if info.exe:lower() == override.exe and (override.title == "" or title_lower:find(override.title, 1, true)) then
+			local merged = {}
+			for k, v in pairs(result or {}) do merged[k] = v end
+			for k, v in pairs(override) do merged[k] = v end
+			return merged
+		end
+	end
+	return result
 end
 
 local function get_foreground_game_window()
@@ -968,26 +1093,51 @@ end
 
 local function resolve_game_identity(info)
 	local process_key = build_process_identity_key(info)
-	if process_key == active_process_key
-		and active_game_name ~= nil
-		and active_identity_config_revision == configuration_revision
-	then
-		return active_game_name, active_game_override, process_key
+	local identity = process_identities[process_key]
+	if identity ~= nil then
+		local code = ffi.new("DWORD[1]", 0)
+		if identity.handle == nil or kernel32.GetExitCodeProcess(identity.handle, code) == 0
+			or tonumber(code[0]) ~= STILL_ACTIVE then
+			if identity.handle ~= nil then kernel32.CloseHandle(identity.handle); identity.handle = nil end
+			process_identities[process_key] = nil
+			identity = nil
+		end
 	end
-
-	-- Keep the title used for folder/rule matching stable for the lifetime of
-	-- a process. A config reload may deliberately remap the active game, but it
-	-- is evaluated against the original title instead of a transient new one.
-	local match_info = info
-	if process_key == active_process_key and active_game_match_title ~= nil then
-		match_info = {
-			exe = info.exe,
-			title = active_game_match_title,
-		}
+	local match_info = identity or info
+	if identity ~= nil and identity.revision == configuration_revision then
+		return identity.name, identity.override, process_key
 	end
-
 	local override = find_game_override(match_info)
-	return resolve_game_name(match_info, override), override, process_key
+	local name = resolve_game_name(match_info, override)
+	if identity ~= nil then
+		identity.name, identity.override, identity.revision = name, override, configuration_revision
+	end
+	return name, override, process_key
+end
+
+local function remember_game_identity(info, name, override, process_key)
+	local identity = process_identities[process_key]
+	if identity == nil then
+		local handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, info.pid)
+		if is_null(handle) then return nil end
+		identity = { title = info.title, exe = info.exe, handle = handle }
+		process_identities[process_key] = identity
+	end
+	identity.name, identity.override, identity.revision = name, override, configuration_revision
+	return identity
+end
+
+local function prune_game_identities(all)
+	if not all and now_seconds() - identity_last_pruned_at < 10 then return end
+	identity_last_pruned_at = now_seconds()
+	for key, identity in pairs(process_identities) do
+		local code = ffi.new("DWORD[1]", 0)
+		if all or kernel32.GetExitCodeProcess(identity.handle, code) == 0 or tonumber(code[0]) ~= STILL_ACTIVE then
+			kernel32.CloseHandle(identity.handle)
+			identity.handle = nil
+			process_identities[key] = nil
+		end
+	end
 end
 
 local function directory_exists(path)
@@ -1081,7 +1231,12 @@ local function update_capture_source(source_name, window_id, is_game_capture, pr
 	end
 
 	local source = obs.obs_get_source_by_name(source_name)
+	if source ~= nil and obs.obs_source_removed(source) then
+		obs.obs_source_release(source)
+		source = nil
+	end
 	if source == nil then
+		controls.source_warning = "Source '" .. source_name .. "' is missing; waiting for it to return"
 		warn_source_once("missing:" .. source_name, "Source '" .. source_name .. "' was not found; the script will keep retrying.")
 		return false
 	end
@@ -1089,6 +1244,7 @@ local function update_capture_source(source_name, window_id, is_game_capture, pr
 	local source_id = obs.obs_source_get_unversioned_id(source) or ""
 	local expected_id = is_game_capture and "game_capture" or "wasapi_process_output_capture"
 	if source_id ~= expected_id then
+		controls.source_warning = "Wrong source type for '" .. source_name .. "': expected " .. expected_id
 		warn_source_once(
 			"type:" .. source_name,
 			"'" .. source_name .. "' is '" .. source_id .. "' instead of the expected '" .. expected_id .. "' source; the script will keep retrying."
@@ -1100,6 +1256,15 @@ local function update_capture_source(source_name, window_id, is_game_capture, pr
 	missing_source_warnings["type:" .. source_name] = nil
 
 	local settings = obs.obs_source_get_settings(source)
+	local already_matches = obs.obs_data_get_string(settings, "window") == window_id
+		and obs.obs_data_get_int(settings, "priority") == priority
+		and (not is_game_capture or (obs.obs_data_get_string(settings, "capture_mode") == "window"
+			and obs.obs_data_get_bool(settings, "anti_cheat_hook") == use_anti_cheat_hook))
+	if already_matches then
+		obs.obs_data_release(settings)
+		obs.obs_source_release(source)
+		return true
+	end
 	if is_game_capture then
 		if game_capture_reapply_not_before > now_seconds() then
 			obs.obs_data_release(settings)
@@ -1139,6 +1304,23 @@ local function update_capture_source(source_name, window_id, is_game_capture, pr
 	return true
 end
 
+local function restore_profile_settings()
+	if #profile_changes == 0 then return end
+	local config = obs.obs_frontend_get_profile_config()
+	for _, change in ipairs(profile_changes) do
+		if config ~= nil and change.profile == obs.obs_frontend_get_current_profile() then
+			local getter, setter = obs["config_get_" .. change.kind], obs["config_set_" .. change.kind]
+			if getter(config, change.section, change.key) == change.applied then
+				if change.had_user_value == false and obs.config_remove_value ~= nil then
+					obs.config_remove_value(config, change.section, change.key)
+				else setter(config, change.section, change.key, change.original) end
+			end
+		end
+	end
+	profile_changes = {}
+	if config ~= nil then obs.config_save(config) end
+end
+
 local function set_obs_output_settings(path, replay_seconds)
 	local config = obs.obs_frontend_get_profile_config()
 	if config == nil then
@@ -1146,18 +1328,26 @@ local function set_obs_output_settings(path, replay_seconds)
 		return false
 	end
 
-	obs.config_set_string(config, "SimpleOutput", "FilePath", path)
-	obs.config_set_string(config, "AdvOut", "RecFilePath", path)
-	obs.config_set_string(config, "AdvOut", "FFFilePath", path)
-
+	-- OBS reads these shared settings asynchronously when starting a buffer.
+	-- Restore them as soon as start finishes; routing lives on the replay output.
+	local function set_value(section, key, kind, value)
+		local getter, setter = obs["config_get_" .. kind], obs["config_set_" .. kind]
+		local original = getter(config, section, key)
+		if original == value then return end
+		table.insert(profile_changes, { profile = obs.obs_frontend_get_current_profile(),
+			section = section, key = key, kind = kind, original = original, applied = value,
+			had_user_value = obs.config_has_user_value == nil or obs.config_has_user_value(config, section, key) })
+		setter(config, section, key, value)
+	end
+	set_value("SimpleOutput", "FilePath", "string", path)
+	set_value("AdvOut", "RecFilePath", "string", path)
+	set_value("AdvOut", "FFFilePath", "string", path)
 	for _, section in ipairs(output_settings_sections) do
-		obs.config_set_bool(config, section, "RecRB", true)
+		set_value(section, "RecRB", "bool", true)
 		if replay_seconds ~= nil then
-			obs.config_set_int(config, section, "RecRBTime", replay_seconds)
+			set_value(section, "RecRBTime", "int", replay_seconds)
 		end
 	end
-
-	obs.config_save(config)
 	return true
 end
 
@@ -1232,60 +1422,118 @@ local function restore_active_replay_routing()
 	clear_replay_routing_state()
 end
 
+local clear_active_game_state
+local deactivate_active_game
+
+local function stop_owned_replay_buffer()
+	if replay_state.owned and obs.obs_frontend_replay_buffer_active() and not replay_state.stopping then
+		replay_state.expected_stop = true
+		replay_state.stopping = true
+		obs.obs_frontend_replay_buffer_stop()
+	end
+end
+
 local function on_frontend_event(event)
+	if controls.on_event then controls.on_event(event) end
 	if event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED then
+		replay_state.owned = replay_state.starting or replay_state.start_requested_for ~= nil
+		local requested_for = replay_state.start_requested_for
+		replay_state.start_requested_for = nil
+		replay_state.starting = false
+		replay_state.paused_process = nil
+		pending_replay_start_at, pending_replay_start_until = 0, 0
 		clear_replay_routing_state()
-		update_active_replay_routing()
+		if replay_state.ready and active_output_root ~= nil
+			and (requested_for == nil or requested_for == active_process_key) then update_active_replay_routing()
+		else stop_owned_replay_buffer() end
+		restore_profile_settings()
+	elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPING then
+		if not replay_state.expected_stop then
+			replay_state.paused_process = active_process_key
+			pending_replay_start_at, pending_replay_start_until = 0, 0
+		end
+		replay_state.stopping = true
 	elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED then
+		if not replay_state.expected_stop then replay_state.paused_process = active_process_key end
+		replay_state.owned, replay_state.starting, replay_state.stopping, replay_state.expected_stop = false, false, false, false
+		replay_state.start_requested_for = nil
+		restore_profile_settings()
 		clear_replay_routing_state()
+	elseif event == obs.OBS_FRONTEND_EVENT_PROFILE_CHANGING then
+		replay_state.profile_changing = true
+		deactivate_active_game()
+		restore_profile_settings()
+	elseif event == obs.OBS_FRONTEND_EVENT_PROFILE_CHANGED then
+		clear_active_game_state()
+		clear_replay_routing_state()
+		profile_changes = {}
+		profile_default_replay_seconds = nil
+		replay_state.paused_process = nil
+		replay_state.profile_changing = false
+		read_profile_replay_seconds_default()
 	end
 end
 
 local function maybe_start_pending_replay_buffer()
-	if pending_replay_start_at <= 0 then
-		return
-	end
-	if stop_replay_buffer_when_game_exits and active_game_pid ~= nil and not active_game_process_is_running() then
-		pending_replay_start_at = 0
-		pending_replay_start_until = 0
-		return
-	end
-
 	local now = now_seconds()
-	if now < pending_replay_start_at then
+	if replay_state.starting then
+		if now > pending_replay_start_until then
+			restore_profile_settings()
+			replay_state.starting = false
+			replay_state.start_requested_for = nil
+			replay_state.paused_process = active_process_key
+			pending_replay_start_at, pending_replay_start_until = 0, 0
+			obs.script_log(obs.LOG_WARNING, "Replay buffer did not start; automatic retries are paused for this game. Start it manually to retry.")
+		end
 		return
 	end
-
-	if obs.obs_frontend_replay_buffer_active() or now > pending_replay_start_until then
-		pending_replay_start_at = 0
-		pending_replay_start_until = 0
+	if pending_replay_start_at <= 0 or now < pending_replay_start_at or replay_state.stopping then return end
+	if controls.paused or controls.ignored[active_process_key] then return end
+	if not replay_state.ready or replay_state.profile_changing or not start_replay_buffer
+		or replay_state.paused_process == active_process_key or not active_game_process_is_running() then return end
+	if obs.obs_frontend_replay_buffer_active() then
+		pending_replay_start_at, pending_replay_start_until = 0, 0
 		return
 	end
-
+	local replay_output = obs.obs_frontend_get_replay_buffer_output()
+	if replay_output == nil then
+		controls.replay_warning = "Enable Replay Buffer in OBS Settings > Output and click Apply"
+		warn_source_once("replay-disabled", "Replay output is unavailable. Enable Replay Buffer in OBS Settings > Output and click Apply.")
+		return
+	end
+	obs.obs_output_release(replay_output)
+	missing_source_warnings["replay-disabled"] = nil
+	controls.replay_warning = nil
+	if not set_obs_output_settings(active_output_root, active_replay_seconds) then return end
+	-- Set state before the API call: tests and some callbacks can be synchronous.
+	replay_state.starting = true
+	replay_state.start_requested_for = active_process_key
+	pending_replay_start_at, pending_replay_start_until = 0, now + 15
 	obs.obs_frontend_replay_buffer_start()
-	pending_replay_start_at = now + 2
 end
 
 local function ensure_replay_buffer_running(folder_changed)
-	if not start_replay_buffer then
-		return
-	end
-
 	local active = obs.obs_frontend_replay_buffer_active()
-	if active and folder_changed and restart_replay_buffer_on_game_change then
+	if replay_state.owned and not active and not replay_state.starting and not replay_state.stopping then
+		replay_state.owned = false
+		replay_state.paused_process = active_process_key
+	end
+	if not start_replay_buffer or not replay_state.ready or replay_state.profile_changing then return end
+	if replay_state.paused_process == active_process_key then return end
+	if active and replay_state.owned and folder_changed and restart_replay_buffer_on_game_change then
 		local now = now_seconds()
-		obs.obs_frontend_replay_buffer_stop()
 		pending_replay_start_at = now + 2
 		pending_replay_start_until = now + 15
+		stop_owned_replay_buffer()
 		return
 	end
-
-	if not active then
-		obs.obs_frontend_replay_buffer_start()
+	if not active and not replay_state.starting and pending_replay_start_at <= 0 then
+		pending_replay_start_at = now_seconds()
 	end
+	maybe_start_pending_replay_buffer()
 end
 
-local function clear_active_game_state()
+clear_active_game_state = function()
 	active_process_key = nil
 	active_window_key = nil
 	active_game_name = nil
@@ -1306,7 +1554,37 @@ local function clear_active_game_state()
 	active_game_capture_source = nil
 	active_game_audio_source = nil
 	pending_replay_start_at = 0
-	pending_replay_start_until = 0
+	if not replay_state.starting then pending_replay_start_until = 0 end
+	replay_state.ready = false
+	replay_state.identity = nil
+end
+
+deactivate_active_game = function()
+	pending_replay_start_at = 0
+	replay_state.ready = false
+	stop_owned_replay_buffer()
+	for _, name in ipairs({ active_game_capture_source or "", active_game_audio_source or "" }) do
+		local source = obs.obs_get_source_by_name(name)
+		if source ~= nil then
+			local settings = obs.obs_source_get_settings(source)
+			if obs.obs_data_get_string(settings, "window") == active_window_id then
+				obs.obs_data_set_string(settings, "window", "")
+				obs.obs_source_update(source, settings)
+			end
+			obs.obs_data_release(settings)
+			obs.obs_source_release(source)
+		end
+	end
+	restore_active_replay_routing()
+	restore_profile_settings()
+	clear_active_game_state()
+end
+
+local function active_game_is_disabled()
+	if active_game_pid == nil then return false end
+	local override = find_game_override({ exe = active_game_exe, title = active_game_match_title })
+	return (override ~= nil and override.enabled == false)
+		or (excluded_exes[active_game_exe] == true and not (override ~= nil and override.enabled == true))
 end
 
 local function maybe_stop_replay_buffer_after_game_exit(now)
@@ -1327,15 +1605,15 @@ local function maybe_stop_replay_buffer_after_game_exit(now)
 	end
 	local delay_seconds = active_game_stop_delay_seconds or game_exit_stop_delay_seconds
 	if now - active_game_exit_detected_at >= delay_seconds then
-		if obs.obs_frontend_replay_buffer_active() then
-			obs.obs_frontend_replay_buffer_stop()
+		if replay_state.owned and obs.obs_frontend_replay_buffer_active() then
 			obs.script_log(obs.LOG_INFO, "Stopped replay buffer because the tracked game process exited.")
 		end
-		clear_active_game_state()
+		deactivate_active_game()
 	end
 end
 
 local function configure_for_game(info, game_name, override, process_key, window_key)
+	if controls.paused or controls.ignored[process_key] then return end
 	local effective_output_root = output_root
 	if override ~= nil and override.root_folder ~= nil and clean_root_path(override.root_folder) ~= "" then
 		effective_output_root = clean_root_path(override.root_folder)
@@ -1343,16 +1621,27 @@ local function configure_for_game(info, game_name, override, process_key, window
 
 	if effective_output_root == nil or effective_output_root == "" or not is_absolute_windows_path(effective_output_root) then
 		obs.script_log(obs.LOG_WARNING, "Output root must be an absolute Windows path; cannot route replay buffer clips: '" .. (effective_output_root or "") .. "'.")
+		deactivate_active_game()
 		return
 	end
+	if not directory_exists(effective_output_root) and controls.fallback_root ~= ""
+		and directory_exists(controls.fallback_root) then
+		controls.fallback_warning = "Primary destination unavailable; using configured fallback"
+		effective_output_root = controls.fallback_root
+	else
+		controls.fallback_warning = nil
+	end
 	if not directory_exists(effective_output_root) then
+		controls.message = "Replay destination unavailable: " .. effective_output_root
 		if effective_output_root ~= last_unavailable_output_root then
 			last_unavailable_output_root = effective_output_root
 			obs.script_log(obs.LOG_WARNING, "Replay root is unavailable; it must already exist before the replay buffer can save: '" .. effective_output_root .. "'.")
 		end
+		deactivate_active_game()
 		return
 	end
 	last_unavailable_output_root = nil
+	controls.check_storage(effective_output_root)
 
 	local effective_match_priority = match_priority
 	if override ~= nil and override.match_priority ~= nil then
@@ -1373,7 +1662,7 @@ local function configure_for_game(info, game_name, override, process_key, window
 	if override ~= nil and override.replay_seconds ~= nil then
 		effective_replay_seconds = math.max(1, override.replay_seconds)
 	end
-	if effective_replay_seconds == nil and active_replay_seconds ~= nil then
+	if effective_replay_seconds == nil then
 		effective_replay_seconds = read_profile_replay_seconds_default()
 	end
 
@@ -1394,15 +1683,10 @@ local function configure_for_game(info, game_name, override, process_key, window
 		or game_audio_source ~= active_game_audio_source
 	local game_changed = process_changed or game_name ~= active_game_name
 
-	if output_root_changed or replay_seconds_changed then
-		if not set_obs_output_settings(effective_output_root, effective_replay_seconds) then
-			return
-		end
-	end
-
 	local game_capture_updated = true
 	local game_audio_updated = true
-	if capture_settings_changed then
+	controls.source_warning = nil
+	do
 		game_capture_updated = update_capture_source(
 			game_capture_source,
 			window_id,
@@ -1413,8 +1697,7 @@ local function configure_for_game(info, game_name, override, process_key, window
 		game_audio_updated = update_capture_source(game_audio_source, window_id, false, effective_match_priority, false)
 	end
 
-	local capture_configuration_complete = not capture_settings_changed
-		or (game_capture_updated and game_audio_updated)
+	local capture_configuration_complete = game_capture_updated and game_audio_updated
 	if capture_configuration_complete and (folder_changed
 		or replay_seconds_changed
 		or game_changed
@@ -1435,9 +1718,8 @@ local function configure_for_game(info, game_name, override, process_key, window
 		)
 	end
 
-	if process_changed or active_game_match_title == nil then
-		active_game_match_title = info.title
-	end
+	replay_state.identity = remember_game_identity(info, game_name, override, process_key)
+	active_game_match_title = replay_state.identity and replay_state.identity.title or info.title
 	active_process_key = process_key
 	active_window_key = window_key
 	active_game_name = game_name
@@ -1459,7 +1741,18 @@ local function configure_for_game(info, game_name, override, process_key, window
 	end
 	active_game_capture_source = game_capture_updated and game_capture_source or nil
 	active_game_audio_source = game_audio_updated and game_audio_source or nil
+	replay_state.ready = capture_configuration_complete
+	if not capture_configuration_complete then
+		controls.message = "Waiting for Game Capture / Game Audio sources or hook reset"
+		pending_replay_start_at = 0
+		stop_owned_replay_buffer()
+		return
+	end
 	ensure_replay_buffer_running(folder_changed or output_root_changed or replay_seconds_changed)
+	controls.active_info = info
+	controls.message = replay_state.paused_process == active_process_key and "Stopped manually - Resume to restart"
+		or (obs.obs_frontend_replay_buffer_active() and "Replay buffer active"
+		or (start_replay_buffer and "Waiting for replay buffer to start" or "Automatic buffer start disabled"))
 	if obs.obs_frontend_replay_buffer_active() then
 		update_active_replay_routing()
 	end
@@ -1467,11 +1760,26 @@ end
 
 function poll_foreground_game()
 	load_text_config()
+	prune_game_identities(false)
+	controls.check_save_timeout()
+	if controls.paused then controls.message = "Automation paused"; return end
+	if replay_state.profile_changing then return end
+	if active_game_is_disabled() then deactivate_active_game() end
 	synchronize_saved_capture_hook_policy()
-	maybe_start_pending_replay_buffer()
+	if replay_state.starting then maybe_start_pending_replay_buffer() end
 
 	local info = get_foreground_game_window()
+	if info and not info.is_excluded and info.exe ~= "obs64.exe" then controls.last_detected = info end
 	local now = now_seconds()
+	maybe_stop_replay_buffer_after_game_exit(now)
+	-- Continue validating the tracked game's sources and storage while the
+	-- user is in OBS or another application. No new foreground game is selected.
+	if active_game_pid and active_game_process_is_running() and controls.active_info
+		and (not info or build_process_identity_key(info) ~= active_process_key) then
+		local tracked = controls.active_info
+		local name, rule, key = resolve_game_identity(tracked)
+		configure_for_game(tracked, name, rule, key, build_window_identity_key(tracked))
+	end
 	if info == nil then
 		candidate_key = nil
 		candidate_count = 0
@@ -1480,7 +1788,12 @@ function poll_foreground_game()
 	end
 
 	local game_name, override, process_key = resolve_game_identity(info)
+	if controls.ignored[process_key] then controls.message = "Ignored for this session: " .. info.exe; return end
 	if not game_window_is_eligible(info, override) then
+		if active_game_pid == nil then
+			controls.message = (info.is_excluded or (override and override.enabled == false))
+				and ("Excluded: " .. info.exe) or ("Window is not fullscreen: " .. info.exe)
+		end
 		candidate_key = nil
 		candidate_count = 0
 		maybe_stop_replay_buffer_after_game_exit(now)
@@ -1502,11 +1815,213 @@ function poll_foreground_game()
 	configure_for_game(info, game_name, override, process_key, new_candidate_key)
 end
 
+-- Controls live in OBS script settings; the protected sidecar is never edited.
+pcall(ffi.cdef, [[
+BOOL GetDiskFreeSpaceExW(const wchar_t *, unsigned long long *, unsigned long long *, unsigned long long *);
+BOOL MessageBeep(UINT);
+void *ShellExecuteW(void *, const wchar_t *, const wchar_t *, const wchar_t *, const wchar_t *, int);
+]])
+controls.shell = ffi.load("shell32")
+
+function controls.free_bytes(path)
+	local bytes = ffi.new("unsigned long long[1]")
+	if kernel32.GetDiskFreeSpaceExW(utf8_to_wide(path), bytes, nil, nil) == 0 then return nil end
+	return tonumber(bytes[0])
+end
+
+function controls.check_storage(path)
+	local cached, now = controls.disk_cache[path], now_seconds()
+	if not cached or now - cached.at >= 15 then
+		cached = { at = now, bytes = controls.free_bytes(path) }
+		controls.disk_cache = { [path] = cached }
+		local warning = nil
+		if cached.bytes == nil then warning = "Cannot check free space: " .. path
+		elseif controls.low_space_gib > 0 and cached.bytes < controls.low_space_gib * 1073741824 then
+			warning = string.format("Low space: %.1f GiB free in %s", cached.bytes / 1073741824, path)
+		end
+		controls.storage_warning = warning
+		if warning and warning ~= controls.last_storage_warning then obs.script_log(obs.LOG_WARNING, warning) end
+		controls.last_storage_warning = warning
+	end
+end
+
+function controls.check_save_timeout()
+	if controls.save_requested_at and now_seconds() - controls.save_requested_at > 30 then
+		controls.save_requested_at = nil
+		controls.notice = "Replay save was not confirmed within 30 seconds. Check the destination and OBS log."
+		obs.script_log(obs.LOG_WARNING, controls.notice)
+	end
+end
+
+function controls.on_event(event)
+	if event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVING then
+		controls.save_requested_at = now_seconds()
+	elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED then
+		controls.save_requested_at = nil
+		local output = obs.obs_frontend_get_replay_buffer_output()
+		if output then
+			local data = obs.calldata_create()
+			local ok = obs.proc_handler_call(obs.obs_output_get_proc_handler(output), "get_last_replay", data)
+			local path = ok and obs.calldata_string(data, "path") or ""
+			obs.calldata_destroy(data)
+			obs.obs_output_release(output)
+			if path and path ~= "" then
+				controls.last_saved = path
+				controls.notice = "Replay saved: " .. path
+				obs.script_log(obs.LOG_INFO, controls.notice)
+				if controls.sound then user32.MessageBeep(0x40) end
+			else
+				controls.notice = "OBS confirmed a replay save, but did not supply its path."
+			end
+		end
+	end
+end
+
+function controls.pause()
+	controls.paused = true
+	deactivate_active_game()
+	controls.message = "Automation paused"
+	return true
+end
+function controls.resume()
+	controls.paused = false
+	replay_state.paused_process = nil
+	-- Resume also clears session-only ignores; permanent exclusions remain.
+	controls.ignored = {}
+	candidate_key, candidate_count = nil, 0
+	controls.message = "Automation resumed - waiting for a game"
+	return true
+end
+function controls.ignore()
+	local info = active_game_pid and controls.active_info or controls.last_detected
+	if info then
+		controls.ignored[build_process_identity_key(info)] = true
+		deactivate_active_game()
+		controls.message = "Ignored for this session: " .. info.exe
+	else controls.notice = "No game detected yet" end
+	return true
+end
+function controls.save_replay()
+	if obs.obs_frontend_replay_buffer_active() then
+		if not controls.save_requested_at then
+			controls.save_requested_at = now_seconds()
+			obs.obs_frontend_replay_buffer_save()
+		end
+	else controls.notice = "Cannot save: replay buffer is inactive" end
+	return true
+end
+function controls.open_last()
+	if controls.last_saved == "" then controls.notice = "No replay has been saved in this session"; return true end
+	local attributes = kernel32.GetFileAttributesW(utf8_to_wide(controls.last_saved))
+	if attributes == INVALID_FILE_ATTRIBUTES then controls.notice = "Last clip is no longer available"; return true end
+	local result = controls.shell.ShellExecuteW(nil, utf8_to_wide("open"), utf8_to_wide(controls.last_saved), nil, nil, 1)
+	if tonumber(ffi.cast("intptr_t", result)) <= 32 then controls.notice = "Windows could not open the last clip" end
+	return true
+end
+
+function controls.status_text()
+	local status = controls.paused and "Automation paused" or controls.message
+	return status .. "\nGame: " .. (active_game_name or "None")
+		.. "\nDestination: " .. (active_output_folder or output_root)
+		.. "\nBuffer: " .. (obs.obs_frontend_replay_buffer_active() and "Active" or "Inactive")
+		.. "\nLast save: " .. (controls.last_saved ~= "" and controls.last_saved or "None this session")
+		.. (controls.storage_warning and ("\n" .. controls.storage_warning) or "")
+		.. (controls.fallback_warning and ("\n" .. controls.fallback_warning) or "")
+		.. (controls.source_warning and ("\n" .. controls.source_warning) or "")
+		.. (controls.replay_warning and ("\n" .. controls.replay_warning) or "")
+		.. (config_last_error and ("\n" .. config_last_error) or "")
+		.. (controls.notice ~= "" and ("\n" .. controls.notice) or "")
+end
+function controls.refresh(props)
+	local property = obs.obs_properties_get(props, "automation_status")
+	if property then obs.obs_property_set_description(property, controls.status_text()) end
+	return true
+end
+
+function controls.use_current()
+	if not controls.settings then return false end
+	local info = active_game_pid and controls.active_info or controls.last_detected
+	if not info then controls.notice = "Focus a game first, then return to Scripts"; return true end
+	local rule = find_game_override(info) or {}
+	obs.obs_data_set_string(controls.settings, "editor_exe", info.exe)
+	obs.obs_data_set_string(controls.settings, "editor_title", rule.title or ((info.exe == "javaw.exe" or info.exe == "java.exe") and info.title or ""))
+	obs.obs_data_set_string(controls.settings, "editor_folder", resolve_game_name(info, rule))
+	obs.obs_data_set_int(controls.settings, "editor_seconds", rule.replay_seconds or replay_seconds or 120)
+	local require_fullscreen = rule.fullscreen_only
+	if require_fullscreen == nil then require_fullscreen = fullscreen_only end
+	obs.obs_data_set_bool(controls.settings, "editor_fullscreen", require_fullscreen)
+	obs.obs_data_set_bool(controls.settings, "editor_enabled", rule.enabled ~= false)
+	return true
+end
+
+function controls.apply_editor(remove)
+	local settings = controls.settings
+	if not settings then return false end
+	local exe = trim(obs.obs_data_get_string(settings, "editor_exe")):lower()
+	local title = trim(obs.obs_data_get_string(settings, "editor_title")):lower()
+	local folder = trim(obs.obs_data_get_string(settings, "editor_folder"))
+	local seconds = tonumber(obs.obs_data_get_int(settings, "editor_seconds")) or 0
+	if not exe:match("^[%w_ .%-]+%.exe$") or title:find("[\r\n|=;]") then
+		controls.notice = "Enter an executable name (game.exe) and a title without |, =, ; or newlines"; return true
+	end
+	if not remove and (folder == "" or folder:find("[\r\n;=]") or seconds < 1 or seconds > 86400) then
+		controls.notice = "Enter a folder name and a replay length from 1 to 86400 seconds"; return true
+	end
+	local key = exe .. (title ~= "" and ("|" .. title) or "")
+	local lines = {}
+	for line in (obs.obs_data_get_string(settings, "ui_game_overrides") .. "\n"):gmatch("([^\n]*)\n") do
+		local existing = line:match("^([^=]+)=")
+		if existing and trim(existing):lower() ~= key then lines[#lines + 1] = line end
+	end
+	if not remove then
+		-- Put specific rules before executable-wide rules. A title match is
+		-- especially useful when different games share javaw.exe.
+		local line = key .. "=folder=" .. safe_folder_name(folder) .. ";replay_seconds=" .. seconds
+			.. ";fullscreen_only=" .. tostring(obs.obs_data_get_bool(settings, "editor_fullscreen"))
+			.. ";enabled=" .. tostring(obs.obs_data_get_bool(settings, "editor_enabled"))
+		table.insert(lines, title ~= "" and 1 or (#lines + 1), line)
+	end
+	local raw = table.concat(lines, "\n")
+	obs.obs_data_set_string(settings, "ui_game_overrides", raw)
+	controls.overrides = parse_game_overrides(raw)
+	configuration_revision = configuration_revision + 1
+	controls.notice = remove and "Editor rule removed; sidecar rules apply again" or ("Saved settings for " .. key)
+	return true
+end
+
+function controls.add_properties(props)
+	obs.obs_properties_add_text(props, "automation_status", controls.status_text(), obs.OBS_TEXT_INFO)
+	obs.obs_properties_add_button(props, "refresh_status", "Refresh status", controls.refresh)
+	for _, action in ipairs({{"pause", "Pause automation", controls.pause}, {"resume", "Resume / clear session ignores", controls.resume},
+		{"ignore", "Ignore current game for this session", controls.ignore}, {"save", "Save replay now", controls.save_replay},
+		{"open", "Open last saved clip", controls.open_last}}) do
+		local fn = action[3]
+		obs.obs_properties_add_button(props, action[1], action[2], function(p) fn(); return controls.refresh(p) end)
+	end
+	obs.obs_properties_add_bool(props, "save_sound", "Play a sound after a confirmed replay save")
+	obs.obs_properties_add_int(props, "low_space_gib", "Warn below free space (GiB; 0 disables warning)", 0, 10000, 1)
+	obs.obs_properties_add_path(props, "fallback_root", "Optional fallback replay folder (blank disables)", obs.OBS_PATH_DIRECTORY, "", nil)
+	obs.obs_properties_add_text(props, "editor_help", "Per-game editor (takes priority over matching sidecar values). Focus a game, return here, then choose Use current game. Changes take effect only with Apply.", obs.OBS_TEXT_INFO)
+	obs.obs_properties_add_button(props, "use_current", "Use current game", controls.use_current)
+	obs.obs_properties_add_text(props, "editor_exe", "Executable", obs.OBS_TEXT_DEFAULT)
+	obs.obs_properties_add_text(props, "editor_title", "Optional title contains (for shared executables)", obs.OBS_TEXT_DEFAULT)
+	obs.obs_properties_add_text(props, "editor_folder", "Game folder name", obs.OBS_TEXT_DEFAULT)
+	obs.obs_properties_add_int(props, "editor_seconds", "Replay length (seconds)", 1, 86400, 1)
+	obs.obs_properties_add_bool(props, "editor_fullscreen", "Require fullscreen for this game")
+	obs.obs_properties_add_bool(props, "editor_enabled", "Allow this game (overrides exclusions)")
+	obs.obs_properties_add_button(props, "apply_game", "Apply game settings", function(p) controls.apply_editor(false); return controls.refresh(p) end)
+	obs.obs_properties_add_button(props, "remove_game", "Remove this editor rule", function(p) controls.apply_editor(true); return controls.refresh(p) end)
+end
+
 function script_description()
 	return "Automatically points the Game Capture and Application Audio Capture sources at the foreground game, routes each saved replay into a per-game folder, and manages the replay buffer. Empty folders are not created merely by detecting a fullscreen app."
 end
 
 function script_defaults(settings)
+	obs.obs_data_set_default_int(settings, "low_space_gib", 5)
+	obs.obs_data_set_default_int(settings, "editor_seconds", 120)
+	obs.obs_data_set_default_bool(settings, "editor_fullscreen", true)
+	obs.obs_data_set_default_bool(settings, "editor_enabled", true)
 	obs.obs_data_set_default_string(settings, "game_capture_source", default_game_capture_source)
 	obs.obs_data_set_default_string(settings, "game_audio_source", default_game_audio_source)
 	obs.obs_data_set_default_string(settings, "output_root", default_output_root)
@@ -1526,6 +2041,7 @@ end
 
 function script_properties()
 	local props = obs.obs_properties_create()
+	controls.add_properties(props)
 
 	local game_capture_prop = obs.obs_properties_add_list(
 		props,
@@ -1574,6 +2090,17 @@ function script_properties()
 end
 
 function script_update(settings)
+	obs.obs_data_addref(settings)
+	if controls.settings then obs.obs_data_release(controls.settings) end
+	controls.settings = settings
+	controls.overrides = parse_game_overrides(obs.obs_data_get_string(settings, "ui_game_overrides"))
+	configuration_revision = configuration_revision + 1
+	controls.sound = obs.obs_data_get_bool(settings, "save_sound")
+	controls.low_space_gib = math.max(0, obs.obs_data_get_int(settings, "low_space_gib"))
+	controls.disk_cache = {}
+	local fallback = clean_root_path(obs.obs_data_get_string(settings, "fallback_root"))
+	controls.fallback_root = is_absolute_windows_path(fallback) and fallback or ""
+	if fallback ~= "" and controls.fallback_root == "" then controls.notice = "Fallback must be an absolute path; fallback disabled" end
 	game_capture_source = trim(obs.obs_data_get_string(settings, "game_capture_source"))
 	game_audio_source = trim(obs.obs_data_get_string(settings, "game_audio_source"))
 	output_root = clean_root_path(obs.obs_data_get_string(settings, "output_root"))
@@ -1617,9 +2144,7 @@ function script_update(settings)
 	}
 	read_profile_replay_seconds_default()
 	load_text_config(true)
-	if directory_exists(output_root) then
-		set_obs_output_settings(output_root, replay_seconds)
-	elseif output_root ~= last_unavailable_output_root then
+	if not directory_exists(output_root) and output_root ~= last_unavailable_output_root then
 		last_unavailable_output_root = output_root
 		obs.script_log(obs.LOG_WARNING, "Replay root is unavailable; it must already exist before the replay buffer can save: '" .. output_root .. "'.")
 	end
@@ -1631,10 +2156,34 @@ end
 function script_load(settings)
 	script_update(settings)
 	obs.obs_frontend_add_event_callback(on_frontend_event)
+	for _, action in ipairs({{"pause", "Pause replay automation", controls.pause}, {"resume", "Resume replay automation", controls.resume},
+		{"ignore", "Ignore current game for this session", controls.ignore}, {"save", "Save replay with confirmation", controls.save_replay},
+		{"open", "Open last saved replay", controls.open_last}}) do
+		local fn = action[3]
+		local callback = function(pressed) if pressed then fn() end end
+		local id = obs.obs_hotkey_register_frontend("game_replay_auto_" .. action[1], action[2], callback)
+		controls.hotkeys[action[1]] = { id = id, callback = callback }
+		local data = obs.obs_data_get_array(settings, "hotkey_" .. action[1])
+		obs.obs_hotkey_load(id, data)
+		obs.obs_data_array_release(data)
+	end
+end
+
+function script_save(settings)
+	for name, hotkey in pairs(controls.hotkeys) do
+		local data = obs.obs_hotkey_save(hotkey.id)
+		obs.obs_data_set_array(settings, "hotkey_" .. name, data)
+		obs.obs_data_array_release(data)
+	end
 end
 
 function script_unload()
 	obs.timer_remove(poll_foreground_game)
 	obs.obs_frontend_remove_event_callback(on_frontend_event)
 	restore_active_replay_routing()
+	restore_profile_settings()
+	prune_game_identities(true)
+	for _, hotkey in pairs(controls.hotkeys) do obs.obs_hotkey_unregister(hotkey.callback) end
+	controls.hotkeys = {}
+	if controls.settings then obs.obs_data_release(controls.settings); controls.settings = nil end
 end
