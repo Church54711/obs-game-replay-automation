@@ -1,0 +1,45 @@
+name: OBS compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: '23 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        obs: ['32.2.2', latest]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download and verify official OBS
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OBS_VERSION: ${{ matrix.obs }}
+        run: ./tests/get-obs-release.ps1 -Version $env:OBS_VERSION -Destination "$env:RUNNER_TEMP/obs-download"
+      - name: Lua guard regression tests
+        shell: pwsh
+        run: ./tests/run-lua-tests.ps1 -LuaLibrary "$env:RUNNER_TEMP/obs-download/runtime/bin/64bit/lua51.dll"
+      - name: Save a real replay in Simple and Advanced modes
+        shell: pwsh
+        run: |
+          foreach ($mode in @('Simple', 'Advanced')) {
+            ./tests/obs-compatibility-test.ps1 -ObsRoot "$env:RUNNER_TEMP/obs-download/runtime" -Mode $mode -EvidenceDir ./dist/compatibility
+          }
+      - name: Retain logs and replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-${{ matrix.obs }}-evidence
+          path: dist/compatibility/

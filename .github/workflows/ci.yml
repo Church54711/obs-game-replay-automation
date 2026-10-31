@@ -20,3 +20,7 @@ jobs:
       - name: Build and validate recipient package
         shell: pwsh
         run: ./package.ps1 -OutputDir "$env:RUNNER_TEMP\obs-game-replay-dist"
+
+      - name: Validate with Windows PowerShell 5.1
+        shell: powershell
+        run: ./package.ps1 -OutputDir "$env:RUNNER_TEMP\obs-game-replay-dist-ps51"

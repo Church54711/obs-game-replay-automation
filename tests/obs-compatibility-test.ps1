@@ -1,0 +1,142 @@
+#Requires -Version 5.1
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$ObsRoot,
+    [ValidateSet('Simple', 'Advanced')][string]$Mode = 'Simple',
+    [string]$EvidenceDir = (Join-Path $PSScriptRoot '..\dist\compatibility'),
+    [int]$TimeoutSeconds = 60
+)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$project = Split-Path $PSScriptRoot -Parent
+$obsFull = (Resolve-Path -LiteralPath $ObsRoot).Path
+if (-not (Test-Path (Join-Path $obsFull 'bin\64bit\obs64.exe'))) { throw 'Expected Windows x64 OBS distribution' }
+$evidence = [IO.Path]::GetFullPath($EvidenceDir)
+New-Item -ItemType Directory -Force $evidence | Out-Null
+$runtime = Join-Path ([IO.Path]::GetTempPath()) ('obs-compatibility-' + [guid]::NewGuid().ToString('N'))
+$process = $null
+$junctions = @()
+function Write-Utf8([string]$Path, [string]$Text) {
+    New-Item -ItemType Directory -Force (Split-Path $Path -Parent) | Out-Null
+    [IO.File]::WriteAllText($Path, $Text, [Text.UTF8Encoding]::new($false))
+}
+try {
+    New-Item -ItemType Directory -Force $runtime | Out-Null
+    foreach ($name in @('bin', 'data', 'core', 'obs-plugins')) {
+        $target = Join-Path $obsFull $name
+        if (Test-Path -LiteralPath $target -PathType Container) {
+            $link = Join-Path $runtime $name
+            New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+            $junctions += $link
+        }
+    }
+    Write-Utf8 (Join-Path $runtime 'portable_mode.txt') ''
+    $config = Join-Path $runtime 'config\obs-studio'
+    $output = Join-Path $runtime 'replays'
+    New-Item -ItemType Directory -Force $output | Out-Null
+    $outputObs = $output.Replace('\', '/')
+    $userIni = "[General]`nFirstRun=true`n[Basic]`nProfile=Compatibility`nProfileDir=Compatibility`nSceneCollection=Compatibility`nSceneCollectionFile=Compatibility`n[BasicWindow]`nPreviewEnabled=false`n"
+    Write-Utf8 (Join-Path $config 'global.ini') $userIni
+    Write-Utf8 (Join-Path $config 'user.ini') $userIni
+    $profile = @"
+[General]
+Name=Compatibility
+[Output]
+Mode=$Mode
+FilenameFormatting=%CCYY-%MM/%CCYY-%MM-%DD %hh-%mm-%ss
+[SimpleOutput]
+FilePath=$outputObs
+RecFormat2=mkv
+StreamEncoder=x264
+RecEncoder=x264
+RecQuality=Small
+RecRB=true
+RecRBTime=3
+RecRBSize=64
+VBitrate=500
+ABitrate=64
+RecAudioEncoder=aac
+StreamAudioEncoder=aac
+[AdvOut]
+RecType=Standard
+RecFilePath=$outputObs
+RecFormat2=mkv
+RecEncoder=obs_x264
+RecAudioEncoder=ffmpeg_aac
+RecTracks=1
+RecRB=true
+RecRBTime=3
+RecRBSize=64
+[Video]
+BaseCX=320
+BaseCY=180
+OutputCX=320
+OutputCY=180
+FPSType=0
+FPSCommon=10
+[Audio]
+SampleRate=48000
+ChannelSetup=Stereo
+"@
+    Write-Utf8 (Join-Path $config 'basic\profiles\Compatibility\basic.ini') $profile
+    $script = Join-Path $runtime 'scripts\game-replay-auto.lua'
+    Write-Utf8 $script ([IO.File]::ReadAllText((Join-Path $project 'game-replay-auto.lua')) + "`n" + [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'compatibility-runtime.lua')))
+    Write-Utf8 (Join-Path $runtime 'scripts\game-replay-auto-config.txt') "root_folder=$outputObs`nfullscreen_only=false`ndefault_replay_seconds=3`n[game_folders]`nobs64.exe=Compatibility Fixture`n[game_overrides]`nobs64.exe=enabled=true`n"
+    $scene = @{
+        name = 'Compatibility'; current_scene = 'Fixture'; current_program_scene = 'Fixture'
+        scene_order = @(@{name='Fixture'})
+        sources = @(@{name='Fixture'; id='scene'; settings=@{items=@()}})
+        modules = @{'scripts-tool'=@(@{path=$script.Replace('\','/'); settings=@{
+            poll_interval_ms=500; stable_poll_count=1; minimum_window_area_percent=0
+        }})}
+    }
+    Write-Utf8 (Join-Path $config 'basic\scenes\Compatibility.json') ($scene | ConvertTo-Json -Depth 20)
+    $exe = Join-Path $runtime 'bin\64bit\obs64.exe'
+    $oldLayer = $env:__COMPAT_LAYER
+    try {
+        $env:__COMPAT_LAYER = 'RunAsInvoker'
+        $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent) -WindowStyle Hidden -PassThru -ArgumentList '--portable','--multi','--only-bundled-plugins','--disable-shutdown-check','--minimize-to-tray'
+    } finally { $env:__COMPAT_LAYER = $oldLayer }
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $passed = $false
+    do {
+        $logs = @(Get-ChildItem (Join-Path $config 'logs') -Filter '*.txt' -ErrorAction SilentlyContinue)
+        if ($logs.Count -gt 0) {
+            $logText = Get-Content -LiteralPath $logs[0].FullName -Raw
+            if ($logText -match 'COMPATIBILITY PASSED:') { $passed = $true; break }
+            if ($logText -match '\[Lua: game-replay-auto.lua\].*(Error|Failed|Error loading|not supported)') { throw 'Lua runtime failure; see retained OBS log' }
+        }
+        if ($process.HasExited) { throw "Test OBS exited: $($process.ExitCode)" }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not $passed) { throw 'OBS compatibility test timed out; see retained OBS log' }
+    $clips = @(Get-ChildItem (Join-Path $output 'Compatibility Fixture') -Recurse -Filter '*.mkv')
+    if ($clips.Count -ne 1 -or $clips[0].Length -le 0) { throw 'Expected one non-empty routed replay' }
+    if ($clips[0].Directory.Name -notmatch '^\d{4}-\d{2}$') { throw 'Date subfolder format was not preserved' }
+    Copy-Item -LiteralPath $clips[0].FullName -Destination (Join-Path $evidence "$Mode-replay.mkv") -Force
+    $summary = @{
+        obsVersion = (Get-Item $exe).VersionInfo.ProductVersion; mode = $Mode
+        passed = $true; replayBytes = $clips[0].Length
+        replaySha256 = (Get-FileHash $clips[0].FullName).Hash
+        scope = 'Real OBS API, source settings, x264 replay encoding, lazy per-game/date routing and cleanup; synthetic video, no game injection or audio acceptance'
+    }
+    Write-Utf8 (Join-Path $evidence "$Mode-summary.json") ($summary | ConvertTo-Json)
+    Write-Host "OBS $($summary.obsVersion) $Mode compatibility PASSED"
+} finally {
+    if ($null -ne $process -and -not $process.HasExited) {
+        [void]$process.CloseMainWindow()
+        if (-not $process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force; $process.WaitForExit() }
+    }
+    $logsPath = Join-Path $runtime 'config\obs-studio\logs'
+    if (Test-Path $logsPath) {
+        Get-ChildItem $logsPath -Filter '*.txt' | ForEach-Object { Copy-Item $_.FullName (Join-Path $evidence "$Mode-obs.log") -Force }
+    }
+    foreach ($link in $junctions) {
+        # Directory.Delete removes the junction itself, never its target.
+        if (-not (Get-Item -LiteralPath $link -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw "Unexpected non-junction: $link" }
+        [IO.Directory]::Delete($link)
+    }
+    $full = [IO.Path]::GetFullPath($runtime)
+    if ((Split-Path $full -Parent) -eq [IO.Path]::GetTempPath().TrimEnd('\') -and
+        (Split-Path $full -Leaf) -like 'obs-compatibility-*') { Remove-Item -LiteralPath $full -Recurse -Force }
+}

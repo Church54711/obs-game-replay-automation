@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0 - 2026-10-30
+
+- Added OBS 33.0.1 compatibility validation with real synthetic replay saves
+  in Simple and Advanced output modes, retaining OBS 32.2.2 coverage.
+- Fresh installs use an application-owned scripts directory independent of
+  OBS's changing native plugin layout. Existing installs keep their original
+  script path, updater target, and configuration.
+- Check required Lua APIs, events, and Windows x64 LuaJIT support before
+  starting automation; missing capabilities disable it with a clear diagnostic.
+- Added reproducible isolated runtime tests, API-removal regression tests,
+  and installer path tests. Runtime tests do not capture the user's desktop
+  or audio and can run alongside normal OBS sessions.
+- Added weekly latest-stable OBS compatibility CI, retained replay/log
+  artifacts, and required compatibility tests before release publication.
+- Validate packaging on both Windows PowerShell 5.1 and PowerShell 7.
+
 ## 0.5.0 - 2026-08-25
 
 - Delayed per-game folder creation until a replay is actually saved. Detecting

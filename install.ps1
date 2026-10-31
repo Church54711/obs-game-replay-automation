@@ -53,7 +53,15 @@ function ConvertTo-AbsolutePath {
 function Get-ScriptsDirFromObsRoot {
     param([Parameter(Mandatory = $true)][string]$Root)
 
-    return (Join-Path (ConvertTo-AbsolutePath -Path $Root -Label "OBS install folder") "data\obs-plugins\frontend-tools\scripts")
+    $installRoot = ConvertTo-AbsolutePath -Path $Root -Label "OBS install folder"
+    # Keep existing script references/config/updater shortcuts valid on upgrade.
+    $legacy = Join-Path $installRoot 'data\obs-plugins\frontend-tools\scripts'
+    if (Test-Path -LiteralPath (Join-Path $legacy 'game-replay-auto.lua') -PathType Leaf) {
+        return $legacy
+    }
+    # Lua scripts load by absolute path, independently of OBS's native plugin
+    # loader. Do not depend on frontend-tools moving into core in OBS 33+.
+    return (Join-Path $installRoot 'data\scripts\obs-game-replay-automation')
 }
 
 function Test-IsAdministrator {

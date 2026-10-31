@@ -1,7 +1,74 @@
 obs = obslua
 
-local ffi = require("ffi")
-local bit = require("bit")
+-- Check capabilities rather than rejecting newer OBS version numbers.
+-- If an API disappears, leave profiles, sources and replay buffers untouched.
+local compatibility_error = nil
+local required_obs_functions = {
+	"config_get_int",
+	"config_save",
+	"config_set_bool",
+	"config_set_int",
+	"config_set_string",
+	"obs_data_get_bool",
+	"obs_data_get_int",
+	"obs_data_get_string",
+	"obs_data_release",
+	"obs_data_set_bool",
+	"obs_data_set_default_bool",
+	"obs_data_set_default_int",
+	"obs_data_set_default_string",
+	"obs_data_set_int",
+	"obs_data_set_string",
+	"obs_enum_sources",
+	"obs_frontend_add_event_callback",
+	"obs_frontend_get_profile_config",
+	"obs_frontend_get_replay_buffer_output",
+	"obs_frontend_remove_event_callback",
+	"obs_frontend_replay_buffer_active",
+	"obs_frontend_replay_buffer_start",
+	"obs_frontend_replay_buffer_stop",
+	"obs_get_source_by_name",
+	"obs_output_get_settings",
+	"obs_output_release",
+	"obs_output_update",
+	"obs_properties_add_bool",
+	"obs_properties_add_int",
+	"obs_properties_add_list",
+	"obs_properties_add_path",
+	"obs_properties_add_text",
+	"obs_properties_create",
+	"obs_property_list_add_string",
+	"obs_source_get_name",
+	"obs_source_get_settings",
+	"obs_source_get_unversioned_id",
+	"obs_source_release",
+	"obs_source_update",
+	"script_log",
+	"source_list_release",
+	"timer_add",
+	"timer_remove",
+}
+for _, name in ipairs(required_obs_functions) do
+	if type(obslua[name]) ~= "function" then
+		compatibility_error = "Missing OBS Lua API: " .. name
+		break
+	end
+end
+for _, name in ipairs({"OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED", "OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED"}) do
+	if type(obslua[name]) ~= "number" then compatibility_error = "Missing OBS event: " .. name end
+end
+local ffi_ok, ffi = pcall(require, "ffi")
+local bit_ok, bit = pcall(require, "bit")
+if not ffi_ok or not bit_ok or ffi.os ~= "Windows" or ffi.arch ~= "x64" then
+	compatibility_error = "Windows x64 OBS with LuaJIT is required"
+end
+if compatibility_error then
+	local message = "Replay automation disabled: " .. compatibility_error .. ". Update the script or use a supported OBS build."
+	function script_description() return message end
+	if type(obslua.script_log) == "function" then obslua.script_log(obslua.LOG_WARNING, message) end
+	return
+end
+
 
 local cdef_ok, cdef_error = pcall(ffi.cdef, [[
 typedef void *HWND;

@@ -9,7 +9,12 @@ permissions:
   contents: write
 
 jobs:
+  compatibility:
+    uses: ./.github/workflows/obs-compatibility.yml
+    permissions:
+      contents: read
   release:
+    needs: compatibility
     runs-on: windows-latest
     steps:
       - name: Check out tagged source

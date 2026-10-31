@@ -87,6 +87,7 @@ if (-not (Test-Path -LiteralPath $releaseSystemTests -PathType Leaf)) {
     throw "Missing release-system tests: $releaseSystemTests"
 }
 & $releaseSystemTests -ProjectRoot $PSScriptRoot
+& (Join-Path $PSScriptRoot 'tests\install-path-tests.ps1')
 & (Join-Path $PSScriptRoot 'update.ps1') -SelfTest
 
 $configContent = [System.IO.File]::ReadAllText($configFile)

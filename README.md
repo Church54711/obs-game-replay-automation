@@ -5,8 +5,9 @@ the foreground fullscreen game, points Game Capture and Application Audio
 Capture at that game, routes saved replays into per-game folders, and manages
 the replay buffer. Merely detecting a fullscreen app does not create a folder.
 
-Version 0.5.0 targets installed OBS Studio on Windows x64. The replay automation
-itself was runtime-tested with OBS Studio 32.2.2. The normal setup flow installs
+Version 0.6.0 targets installed OBS Studio on Windows x64. Automated runtime
+tests cover OBS Studio 32.2.2 and 33.0.1 in Simple and Advanced output modes.
+The normal setup flow installs
 into the detected OBS Studio folder under Program Files and requests
 administrator permission.
 
@@ -40,6 +41,35 @@ For an unattended install from an already elevated PowerShell:
 
 Use -ObsRoot for a nonstandard installed OBS location, or -ScriptsDir to supply
 the final OBS scripts directory directly.
+
+Fresh installs use `data\scripts\obs-game-replay-automation` inside the OBS
+installation. Existing installations retain their original Lua path and config,
+including the legacy `data\obs-plugins\frontend-tools\scripts` directory.
+Lua scripts are loaded by their saved absolute path; they do not use OBS's
+native plugin discovery. This avoids depending on the OBS 33 `core` layout or
+the planned removal of legacy native plugin loading in OBS 34.
+
+## OBS compatibility
+
+The script checks the Lua APIs it needs before starting automation. If a future
+OBS build removes an API, automation stays disabled with an explanatory log
+message instead of partially changing capture sources or profile settings.
+Newer version numbers alone do not disable the script.
+
+The **OBS compatibility** GitHub Actions workflow downloads official Windows x64
+builds, verifies their SHA-256 asset digests, and saves a real synthetic replay
+in both output modes. It runs for pull requests, main-branch pushes, manually,
+and weekly against OBS 32.2.2 and the latest stable OBS. Release publication
+requires these checks to pass. Logs and sample replays are retained as workflow
+artifacts; failed scheduled runs appear in Actions and follow your GitHub
+notification preferences.
+
+These checks cover API availability, capture source settings, x264 encoding,
+lazy per-game/date routing, and routing cleanup. They do not certify every
+game's graphics hook, anti-cheat, application audio, or hardware encoder.
+Future OBS changes cannot be guaranteed compatible in advance; scheduled
+tests detect regressions so they can be fixed. See [tests/README.md](tests/README.md)
+for local reproduction.
 
 ## Required OBS sources
 
@@ -204,8 +234,8 @@ The repository validates every push and pull request on a GitHub-hosted Windows
 runner. To publish, update VERSION, manifest.json, and CHANGELOG.md together,
 commit the change, and push the matching tag:
 
-    git tag v0.5.0
-    git push origin v0.5.0
+    git tag v0.6.0
+    git push origin v0.6.0
 
 The release workflow reruns package validation, rejects a mismatched tag,
 publishes the versioned ZIP and checksum, creates stable latest-download aliases

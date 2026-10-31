@@ -1,4 +1,41 @@
-# Window identity runtime fixture
+# OBS compatibility tests
+
+Download an official portable Windows x64 OBS build (asset digest verified),
+then run these commands from the repository root:
+
+```powershell
+./tests/get-obs-release.ps1 -Version latest -Destination .tools/obs-latest
+./tests/run-lua-tests.ps1 -LuaLibrary .tools/obs-latest/runtime/bin/64bit/lua51.dll
+./tests/install-path-tests.ps1
+./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Simple
+./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Advanced
+```
+
+Use a fresh download directory each time. `-Version 32.2.2` selects the older
+baseline. `-EvidenceDir` selects where logs, replay MKVs and JSON summaries go.
+The runtime harness creates a fresh portable configuration, links only the OBS
+distribution directories, and stops only its own child process. Normal OBS
+sessions may remain open. It supports both the older `obs-plugins` layout and
+the OBS 33 `core` layout; it never copies your normal OBS profile.
+
+The appended test-only Lua driver substitutes foreground discovery, creates
+hidden Game Capture / Application Audio Capture sources, and encodes a visible
+color source using x264. It checks real source retargeting, no game folder before
+save, a non-empty MKV under the game/date directory, and restoration of the
+filename format. It does not test actual game injection or captured audio.
+`ffprobe` or `ffmpeg -v error -i <replay> -f null -` can independently validate
+the retained media. Runtime tests require a Windows desktop/D3D environment.
+
+The Lua guard tests remove each required API/event independently and check that
+startup disables automation without mutating OBS. Installer path tests load only
+the pure path helpers into temporary fixtures and do not run installation.
+
+GitHub Actions runs the runtime tests against 32.2.2 and latest stable weekly,
+on PRs/pushes, and before publishing releases. This workflow must be merged into
+the default branch for scheduled checks to run. GitHub may disable schedules
+in inactive repositories; check the Actions tab when resuming maintenance.
+
+## Older foreground window fixtures
 
 This source-only fixture is not included in recipient release zips. It provides
 a repeatable foreground-window sequence for manually validating capture identity
