@@ -1,4 +1,96 @@
-# Window identity runtime fixture
+# OBS compatibility tests
+
+Run build-lua.ps1 after editing src/; package.ps1 rejects an out-of-date bundle.
+
+Download an official portable Windows x64 OBS build (asset digest verified),
+then run these commands from the repository root:
+
+```powershell
+./tests/get-obs-release.ps1 -Version latest -Destination .tools/obs-latest
+./tests/run-lua-tests.ps1 -LuaLibrary .tools/obs-latest/runtime/bin/64bit/lua51.dll
+./tests/install-path-tests.ps1
+./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Simple
+./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Advanced
+```
+
+Use a fresh download directory each time. `-Version 32.2.2` selects the older
+baseline. `-EvidenceDir` selects where logs, replay MKVs and JSON summaries go.
+The runtime harness creates a fresh portable configuration, links only the OBS
+distribution directories, and stops only its own child process. Normal OBS
+sessions may remain open. It supports both the older `obs-plugins` layout and
+the OBS 33 `core` layout; it never copies your normal OBS profile.
+
+The appended test-only Lua driver substitutes foreground discovery, creates
+hidden Game Capture / Application Audio Capture sources, and encodes a visible
+color source using x264. It checks real source retargeting, no game folder before
+save, a non-empty MKV under the game/date directory, and restoration of the
+filename format. It also checks profile restoration, native properties creation,
+editor settings serialization, source removal/recreation, manual stop suppression,
+and Pause/Resume in real OBS. It does not test actual game injection, captured
+audio, physical key presses, notification audibility, or visually inspect the
+Scripts dialog. The properties and callbacks are exercised through OBS's APIs.
+It also checks settings migration, cross-scene reuse, import/export, corrupt-file
+recovery, concurrent-writer refusal, idempotent first-run source creation, folder
+write probing, live status output, and a diagnostic privacy allowlist.
+`ffprobe` or `ffmpeg -v error -i <replay> -f null -` can independently validate
+the retained media. Runtime tests require a Windows desktop/D3D environment.
+
+`lua-behavior-tests.lua` exercises pause/resume and ownership, profile switches,
+source loss, drive recovery/fallback, low-space warnings, save confirmation and
+timeouts, editor validation/precedence, and status. `installer-behavior-tests.ps1`
+runs real file operations in disposable directories, replacing only process
+discovery and injecting a corrupted copy. It verifies rollback after locked
+files, directory collisions, late configuration errors, and hash mismatches,
+plus config preservation and retained recovery data after successful updates.
+Neither suite changes the installed OBS or requires closing it.
+
+The Lua guard tests remove each required API/event independently and check that
+startup disables automation without mutating OBS. Installer path tests load only
+the pure path helpers into temporary fixtures and do not run installation.
+
+GitHub Actions runs the runtime tests against 32.2.2 and latest stable weekly,
+on PRs/pushes, and before publishing releases. This workflow must be merged into
+the default branch for scheduled checks to run. GitHub may disable schedules
+in inactive repositories; check the Actions tab when resuming maintenance.
+The separate OBS prerelease early warning workflow runs weekly/manually against
+an official prerelease newer than stable, or reports an explicit skip when none
+exists. Its failures do not block stable releases.
+
+## Capture, audio, and GPU acceptance
+
+With ffmpeg on PATH and a working Windows graphics/audio session:
+
+    ./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Simple -CaptureAcceptance -EvidenceDir dist/capture-x264
+    ./tests/obs-compatibility-test.ps1 -ObsRoot .tools/obs-latest/runtime -Mode Advanced -CaptureAcceptance -Encoder NVENC -EvidenceDir dist/capture-nvenc
+
+This compiles the isolated OpenGL fixture with CAPTURE_ACCEPTANCE. It renders an
+animated color field in an off-screen window without taking focus and plays a
+quiet 440 Hz tone from its own process. The isolated OBS profile has no desktop
+or microphone capture. Game Capture must confirm a real graphics hook, and the
+saved MKV must decode into changing video and a full second of the expected
+application-audio tone. NVENC runs additionally require an actual obs-nvenc
+encoder session in the log; unavailable GPUs fail rather than silently using x264.
+No GPU test runs on generic hosted CI runners.
+
+These are repeatable pipeline checks, not certification of commercial games.
+Before claiming support for a particular game/graphics API/anti-cheat combination,
+use a separate OBS profile to save a replay during real gameplay, confirm video,
+game-only audio, hotkey operation, correct per-game folder and chosen encoder,
+then test focus changes, pause/resume, game exit, and a second game. Record OBS,
+game, GPU/driver, output mode, encoder, and observed failures. Hardware output
+and physical hotkeys require that separate acceptance.
+
+## Release checks
+
+Both PowerShell 5.1 and 7 run package and installer transaction tests. Executable
+setup tests additionally exercise ZIP updates of EXE-managed installs, retained
+preferences, and Installed Apps consistency. Run release-verification-tests.ps1
+with -SetupPath to check the real artifact's checksum and signature policy.
+Unsigned artifacts must be rejected by -RequireSignature. Trusted signing cannot
+be validated end to end until a publisher identity is configured; see
+[signing instructions](../signing/README.md).
+
+## Older foreground window fixtures
 
 This source-only fixture is not included in recipient release zips. It provides
 a repeatable foreground-window sequence for manually validating capture identity

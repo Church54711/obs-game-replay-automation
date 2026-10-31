@@ -11,6 +11,11 @@ internal sealed class HookPolicyWindow : Form
     private int focusAttempts;
     private IntPtr deviceContext;
     private IntPtr renderingContext;
+#if CAPTURE_ACCEPTANCE
+    private System.IO.MemoryStream toneStream;
+    private System.Media.SoundPlayer tone;
+    protected override bool ShowWithoutActivation { get { return true; } }
+#endif
 
     [StructLayout(LayoutKind.Sequential)]
     private struct PixelFormatDescriptor
@@ -89,6 +94,15 @@ internal sealed class HookPolicyWindow : Form
         BackColor = Color.FromArgb(24, 48, 72);
         ShowInTaskbar = true;
         TopMost = true;
+#if CAPTURE_ACCEPTANCE
+        Text = "Replay Capture Acceptance";
+        WindowState = FormWindowState.Normal;
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(-10000, -10000);
+        ClientSize = new Size(320, 180);
+        ShowInTaskbar = false;
+        TopMost = false;
+#endif
 
         focusTimer = new Timer { Interval = 100 };
         focusTimer.Tick += delegate
@@ -106,7 +120,7 @@ internal sealed class HookPolicyWindow : Form
             }
         };
 
-        closeTimer = new Timer { Interval = 45000 };
+        closeTimer = new Timer { Interval = 90000 };
         closeTimer.Tick += delegate
         {
             closeTimer.Stop();
@@ -124,6 +138,10 @@ internal sealed class HookPolicyWindow : Form
             wglMakeCurrent(deviceContext, renderingContext);
             glViewport(0, 0, Math.Max(1, ClientSize.Width), Math.Max(1, ClientSize.Height));
             glClearColor(0.09f, 0.19f, 0.28f, 1.0f);
+#if CAPTURE_ACCEPTANCE
+            float phase = (float)(0.5 + 0.4 * Math.Sin(Environment.TickCount / 250.0));
+            glClearColor(phase, 0.25f, 1.0f - phase, 1.0f);
+#endif
             glClear(ColorBufferBit);
             SwapBuffers(deviceContext);
         };
@@ -131,10 +149,29 @@ internal sealed class HookPolicyWindow : Form
         Shown += delegate
         {
             InitializeOpenGl();
+#if CAPTURE_ACCEPTANCE
+            // Quiet 440 Hz stereo tone, produced in this process only.
+            System.IO.File.WriteAllText(Environment.GetCommandLineArgs()[1], Handle.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture));
+            toneStream = new System.IO.MemoryStream();
+            var writer = new System.IO.BinaryWriter(toneStream);
+            int bytes = 48000 * 4;
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(bytes + 36); writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt "));
+            writer.Write(16); writer.Write((short)1); writer.Write((short)2);
+            writer.Write(48000); writer.Write(192000); writer.Write((short)4); writer.Write((short)16);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("data")); writer.Write(bytes);
+            for (int i = 0; i < 48000; i++) {
+                short sample = (short)(32767 * 0.01 * Math.Sin(2 * Math.PI * 440 * i / 48000));
+                writer.Write(sample); writer.Write(sample);
+            }
+            writer.Flush(); toneStream.Position = 0;
+            tone = new System.Media.SoundPlayer(toneStream); tone.PlayLooping();
+#else
             BringToFront();
             Activate();
             Focus();
             focusTimer.Start();
+#endif
             closeTimer.Start();
             renderTimer.Start();
         };
@@ -174,6 +211,9 @@ internal sealed class HookPolicyWindow : Form
     private void DisposeOpenGl()
     {
         renderTimer.Stop();
+#if CAPTURE_ACCEPTANCE
+        if (tone != null) { tone.Stop(); tone.Dispose(); toneStream.Dispose(); }
+#endif
         wglMakeCurrent(IntPtr.Zero, IntPtr.Zero);
         if (renderingContext != IntPtr.Zero)
         {

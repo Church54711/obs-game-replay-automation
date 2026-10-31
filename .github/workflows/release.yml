@@ -9,7 +9,12 @@ permissions:
   contents: write
 
 jobs:
+  compatibility:
+    uses: ./.github/workflows/obs-compatibility.yml
+    permissions:
+      contents: read
   release:
+    needs: compatibility
     runs-on: windows-latest
     steps:
       - name: Check out tagged source
@@ -61,6 +66,53 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "output_directory=$outputDirectory" >> $env:GITHUB_OUTPUT
 
+      - name: Download verified portable setup compiler
+        shell: pwsh
+        run: ./tests/get-inno-setup.ps1 -Destination "$env:RUNNER_TEMP\inno"
+
+      - name: Build and test Windows installer
+        shell: pwsh
+        env:
+          SIGNING_ENABLED: ${{ vars.REPLAY_SIGNING_ENABLED }}
+          SIGNING_THUMBPRINT: ${{ vars.REPLAY_SIGNING_THUMBPRINT }}
+          SIGNING_PFX: ${{ secrets.REPLAY_SIGNING_PFX_BASE64 }}
+          SIGNING_PASSWORD: ${{ secrets.REPLAY_SIGNING_PFX_PASSWORD }}
+        run: |
+          $outputDirectory = '${{ steps.package.outputs.output_directory }}'
+          $version = '${{ steps.package.outputs.version }}'
+          $signing = @{}
+          if ($env:SIGNING_ENABLED -eq 'true') {
+            if ($env:SIGNING_THUMBPRINT -notmatch '^[a-fA-F0-9]{40}$' -or -not $env:SIGNING_PFX -or -not $env:SIGNING_PASSWORD) {
+              throw 'Signing enabled without a certificate, password, or pinned thumbprint.'
+            }
+            $pfx = Join-Path $env:RUNNER_TEMP 'publisher.pfx'
+            try {
+              [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX))
+              $password = ConvertTo-SecureString $env:SIGNING_PASSWORD -AsPlainText -Force
+              $certificates = @(Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password)
+              $keys = @($certificates | Where-Object HasPrivateKey)
+              $keys.Thumbprint | Set-Content (Join-Path $env:RUNNER_TEMP 'replay-signing-keys.txt')
+              if ($keys.Count -ne 1 -or $keys[0].Thumbprint -ne $env:SIGNING_THUMBPRINT) { throw 'Imported certificate does not match the pinned publisher.' }
+              $signing.CertificateThumbprint = $env:SIGNING_THUMBPRINT
+            } finally { Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue }
+          }
+          ./build-installer.ps1 -CompilerPath "$env:RUNNER_TEMP\inno\compiler\ISCC.exe" -OutputDir $outputDirectory -SkipPackage @signing
+          ./tests/release-verification-tests.ps1 -SetupPath "$outputDirectory\obs-game-replay-automation-$version-setup.exe"
+          ./tests/windows-setup-tests.ps1 -SetupPath "$outputDirectory\obs-game-replay-automation-$version-setup.exe" -EvidenceDir "$env:RUNNER_TEMP\setup-evidence"
+
+      - name: Remove imported signing keys
+        if: always()
+        shell: pwsh
+        run: |
+          $inventory = Join-Path $env:RUNNER_TEMP 'replay-signing-keys.txt'
+          if (Test-Path -LiteralPath $inventory) {
+            foreach ($thumbprint in Get-Content -LiteralPath $inventory) {
+              if ($thumbprint -notmatch '^[a-fA-F0-9]{40}$') { throw 'Invalid cleanup inventory.' }
+              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -DeleteKey -Force
+            }
+            Remove-Item -LiteralPath $inventory -Force
+          }
+
       - name: Publish release assets
         shell: pwsh
         env:
@@ -73,6 +125,8 @@ jobs:
             (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION.zip.sha256.txt"),
             (Join-Path $env:OUTPUT_DIRECTORY 'obs-game-replay-automation-latest.zip'),
             (Join-Path $env:OUTPUT_DIRECTORY 'obs-game-replay-automation-latest.zip.sha256.txt'),
+            (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION-setup.exe"),
+            (Join-Path $env:OUTPUT_DIRECTORY "obs-game-replay-automation-$env:VERSION-setup.exe.sha256.txt"),
             (Join-Path $env:OUTPUT_DIRECTORY 'latest.json')
           )
           & gh release create $env:GITHUB_REF_NAME @assets `

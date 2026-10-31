@@ -1,0 +1,36 @@
+name: OBS prerelease early warning
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 9 * * 3'
+
+permissions:
+  contents: read
+
+jobs:
+  prerelease:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Find and verify a newer official OBS prerelease
+        id: obs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./tests/get-obs-release.ps1 -Version prerelease -Destination "$env:RUNNER_TEMP/obs-prerelease"
+      - name: Test API guards and replay behavior
+        if: steps.obs.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          ./tests/run-lua-tests.ps1 -LuaLibrary "$env:RUNNER_TEMP/obs-prerelease/runtime/bin/64bit/lua51.dll"
+          foreach ($mode in @('Simple', 'Advanced')) {
+            ./tests/obs-compatibility-test.ps1 -ObsRoot "$env:RUNNER_TEMP/obs-prerelease/runtime" -Mode $mode -EvidenceDir ./dist/prerelease
+          }
+      - name: Retain prerelease evidence
+        if: always() && steps.obs.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-prerelease-evidence
+          path: dist/prerelease/

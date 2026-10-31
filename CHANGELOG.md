@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.8.0 - Unreleased
+
+- Unified install, update, and uninstall paths in an installation record. ZIP
+  updates preserve custom OBS configuration paths and synchronize EXE maintenance
+  files and the Windows Installed Apps version.
+- Migrated preferences, per-game rules, and hotkeys to a versioned user settings
+  file under the selected OBS configuration folder, with migration backups,
+  validated import/export, atomic writes, and concurrent-writer protection.
+- Split Lua development sources into ordered components while retaining one
+  generated, installable script. Packaging rejects a stale generated bundle.
+- Added first-run checks, explicit folder/source setup actions, a continuously
+  refreshed local status page, and diagnostics that omit personal paths/names.
+- Added scheduled/manual OBS prerelease early warnings and optional real OpenGL
+  capture, application-audio tone, and NVENC acceptance tests with decoded media
+  checks. Commercial game and anti-cheat behavior still requires game testing.
+- Prepared optional timestamped publisher signing for Setup and its uninstaller,
+  plus checksum/signature verification. Builds remain unsigned by default.
+
+## 0.7.0 - 2026-10-30
+
+- Added a standard Windows setup EXE with OBS and configuration folder selection,
+  fresh-install replay folder selection, optional update notifications, Start
+  Menu shortcuts, upgrade preservation, and a Windows Installed Apps entry.
+- Added guarded uninstall with scene registration cleanup, recovery copies, and
+  retained clips/configuration. Automated tests exercise the actual EXE and
+  uninstaller; release workflows now build and publish the EXE and checksum.
+
+- Respect manual replay-buffer stops and buffers started by the user. Added
+  Pause, Resume, Ignore current game for this session, Save replay, and Open
+  last saved clip controls with configurable OBS hotkeys.
+- Temporarily apply replay startup settings, then restore the original profile
+  values without overwriting intervening user edits. Handle profile switches,
+  asynchronous start/stop events, and startup timeouts.
+- Revalidate capture sources while tracking a game, recover recreated sources,
+  wait for unavailable destinations, and support an explicitly configured
+  fallback folder. Never create per-game folders until a replay is saved.
+- Show status, destination, buffer state, warnings, and last confirmed replay
+  in Tools > Scripts. Refresh status updates the panel; action buttons also
+  refresh it. Optional save sound and configurable low-space warnings added.
+- Added a per-game editor in Tools > Scripts, including current-game selection,
+  executable/title matching, folder, duration, fullscreen policy, and exclusions.
+  Overrides persist in OBS settings without writing to the protected sidecar.
+- Retain the last valid sidecar configuration after malformed/partial edits.
+- Transactional installation stages and verifies files, backs up runtime/config/
+  scene files, validates copied files, and restores previous bytes on failure.
+  Successful installs retain recovery files and commit version metadata last.
+- Added lifecycle, editor, storage, save-feedback, installer fault-injection,
+  and real-OBS serialization/source-recovery/manual-stop acceptance tests.
+
+## 0.6.0 - 2026-10-30
+
+- Added OBS 33.0.1 compatibility validation with real synthetic replay saves
+  in Simple and Advanced output modes, retaining OBS 32.2.2 coverage.
+- Fresh installs use an application-owned scripts directory independent of
+  OBS's changing native plugin layout. Existing installs keep their original
+  script path, updater target, and configuration.
+- Check required Lua APIs, events, and Windows x64 LuaJIT support before
+  starting automation; missing capabilities disable it with a clear diagnostic.
+- Added reproducible isolated runtime tests, API-removal regression tests,
+  and installer path tests. Runtime tests do not capture the user's desktop
+  or audio and can run alongside normal OBS sessions.
+- Added weekly latest-stable OBS compatibility CI, retained replay/log
+  artifacts, and required compatibility tests before release publication.
+- Validate packaging on both Windows PowerShell 5.1 and PowerShell 7.
+
 ## 0.5.0 - 2026-08-25
 
 - Delayed per-game folder creation until a replay is actually saved. Detecting

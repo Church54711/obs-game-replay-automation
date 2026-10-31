@@ -14,6 +14,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+. (Join-Path $PSScriptRoot 'installation.ps1')
 
 function ConvertTo-SemanticVersion {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -360,16 +361,12 @@ try {
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDirectory
     $installerPath = Assert-UpdateArchive -ExtractedDirectory $extractDirectory -ExpectedVersion $latestVersion
 
-    $escapedInstaller = $installerPath.Replace("'", "''")
-    $escapedScriptsDirectory = $PSScriptRoot.Replace("'", "''")
-    $command = "& '$escapedInstaller' -ScriptsDir '$escapedScriptsDirectory' -NonInteractive"
-    if ($NoStartMenuShortcut) {
-        $command += ' -NoStartMenuShortcut'
-    }
+    $command = Get-ReplayUpdateCommand -InstallerPath $installerPath -ScriptsDir $PSScriptRoot -NoStartMenuShortcut:$NoStartMenuShortcut
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $process = Start-Process `
         -FilePath 'powershell.exe' `
         -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand" `
+        -WindowStyle Hidden `
         -Wait `
         -PassThru
     if ($process.ExitCode -ne 0) {

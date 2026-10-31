@@ -24,7 +24,7 @@ $config = [System.IO.File]::ReadAllText($configPath)
 $readme = [System.IO.File]::ReadAllText($readmePath)
 
 $requiredLuaPatterns = [ordered]@{
-    "root-only profile path" = 'set_obs_output_settings\(effective_output_root,\s*effective_replay_seconds\)'
+    "root-only profile path" = 'set_obs_output_settings\(active_output_root,\s*active_replay_seconds\)'
     "active replay output access" = 'obs\.obs_frontend_get_replay_buffer_output\(\)'
     "game-prefixed replay format" = 'local\s+routed_format\s*=\s*active_game_name\s*\.\.\s*"/"\s*\.\.\s*base_format'
     "replay directory stays at root" = 'obs\.obs_data_set_string\(settings,\s*"directory",\s*active_output_root\)'

@@ -1,6 +1,6 @@
 {
   "name": "obs-game-replay-automation",
-  "version": "0.5.0",
+  "version": "0.8.0",
   "type": "obs-lua-script",
   "license": "0BSD",
   "entry": "game-replay-auto.lua",
@@ -8,7 +8,12 @@
   "platform": "windows",
   "obsScriptEngine": "LuaJIT",
   "description": "Targets the active fullscreen game and routes saved replays into per-game folders without creating empty folders during detection.",
-  "testedWithObs": "32.2.2",
+  "testedWithObs": "33.0.1",
+  "compatibility": {
+    "runtimeTestedVersions": ["32.2.2", "33.0.1"],
+    "outputModes": ["Simple", "Advanced"],
+    "scope": "Synthetic x264 replay, source settings, per-game/date routing and cleanup; game injection and application audio require separate acceptance"
+  },
   "installTarget": "installed-obs-windows-x64",
   "repository": "https://github.com/Church54711/obs-game-replay-automation",
   "updates": {
