@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $project = Split-Path $PSScriptRoot -Parent
 $obsFull = (Resolve-Path -LiteralPath $ObsRoot).Path
 if (-not (Test-Path (Join-Path $obsFull 'bin\64bit\obs64.exe'))) { throw 'Expected Windows x64 OBS distribution' }
+$expectedVersion = (Get-Item (Join-Path $obsFull 'bin\64bit\obs64.exe')).VersionInfo.ProductVersion
 $evidence = [IO.Path]::GetFullPath($EvidenceDir)
 New-Item -ItemType Directory -Force $evidence | Out-Null
 $runtime = Join-Path ([IO.Path]::GetTempPath()) ('obs-compatibility-' + [guid]::NewGuid().ToString('N'))
@@ -38,7 +39,7 @@ try {
     New-Item -ItemType Directory -Force $recording | Out-Null
     $recordingObs = $recording.Replace('\', '/')
     $outputObs = $output.Replace('\', '/')
-    $userIni = "[General]`nFirstRun=true`n[Basic]`nProfile=Compatibility`nProfileDir=Compatibility`nSceneCollection=Compatibility`nSceneCollectionFile=Compatibility`n[BasicWindow]`nPreviewEnabled=false`n"
+    $userIni = "[General]`nFirstRun=true`nEnableAutoUpdates=false`n[Basic]`nProfile=Compatibility`nProfileDir=Compatibility`nSceneCollection=Compatibility`nSceneCollectionFile=Compatibility`n[BasicWindow]`nPreviewEnabled=false`n"
     Write-Utf8 (Join-Path $config 'global.ini') $userIni
     Write-Utf8 (Join-Path $config 'user.ini') $userIni
     $profile = @"
@@ -98,7 +99,7 @@ ChannelSetup=Stereo
     $oldLayer = $env:__COMPAT_LAYER
     try {
         $env:__COMPAT_LAYER = 'RunAsInvoker'
-        $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent) -WindowStyle Hidden -PassThru -ArgumentList '--portable','--multi','--only-bundled-plugins','--disable-shutdown-check','--minimize-to-tray'
+        $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent) -WindowStyle Hidden -PassThru -ArgumentList '--portable','--multi','--only-bundled-plugins','--disable-updater','--disable-shutdown-check','--minimize-to-tray'
     } finally { $env:__COMPAT_LAYER = $oldLayer }
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $passed = $false
@@ -113,12 +114,15 @@ ChannelSetup=Stereo
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
     if (-not $passed) { throw 'OBS compatibility test timed out; see retained OBS log' }
+    $versionMatch = [regex]::Match($logText, 'COMPATIBILITY PASSED: ([^\r\n]+)')
+    $runningVersion = $versionMatch.Groups[1].Value.Trim()
+    if ($runningVersion -ne $expectedVersion) { throw "Unexpected running OBS version: $runningVersion; expected $expectedVersion" }
     $clips = @(Get-ChildItem (Join-Path $output 'Compatibility Fixture') -Recurse -Filter '*.mkv')
     if ($clips.Count -ne 1 -or $clips[0].Length -le 0) { throw 'Expected one non-empty routed replay' }
     if ($clips[0].Directory.Name -notmatch '^\d{4}-\d{2}$') { throw 'Date subfolder format was not preserved' }
     Copy-Item -LiteralPath $clips[0].FullName -Destination (Join-Path $evidence "$Mode-replay.mkv") -Force
     $summary = @{
-        obsVersion = (Get-Item $exe).VersionInfo.ProductVersion; mode = $Mode
+        obsVersion = $runningVersion; mode = $Mode
         passed = $true; replayBytes = $clips[0].Length
         replaySha256 = (Get-FileHash $clips[0].FullName).Hash
         scope = 'Real OBS API, source settings, x264 replay encoding, lazy per-game/date routing and cleanup; synthetic video, no game injection or audio acceptance'
